@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="editor_bg">#FF000000</color>
+    <color name="editor_surface">#FF141414</color>
+    <color name="editor_surface_elevated">#FF1F1F1F</color>
+    <color name="editor_accent">#FF4DA3FF</color>
+    <color name="editor_text_primary">#FFFFFFFF</color>
+    <color name="editor_text_secondary">#FFB0B0B0</color>
+    <color name="editor_divider">#FF2A2A2A</color>
+</resources>

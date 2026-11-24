@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TelePhoto Editor</string>
+
+    <!-- Telegram upstream string keys required by CropView / CropRotationWheel / Brush -->
+    <string name="AccDescrAspectRatio">Aspect Ratio</string>
+    <string name="AccDescrMirror">Mirror</string>
+    <string name="AccDescrRotate">Rotate 90°</string>
+    <string name="CropOriginal">Original</string>
+    <string name="CropSquare">Square (1:1)</string>
+    <string name="PaintCircle">Circle</string>
+    <string name="PaintRectangle">Rectangle</string>
+    <string name="PaintStar">Star</string>
+    <string name="PaintBubble">Bubble</string>
+    <string name="PaintArrow">Arrow</string>
+
+    <!-- App UI strings -->
+    <string name="pick_photo">Pick Photo from Gallery</string>
+    <string name="landing_subtitle">Powered directly by Telegram Open Source OpenGL ES 2.0 Filters, Curves, Crop &amp; GPU Paint Engine</string>
+    <string name="tool_crop">Crop</string>
+    <string name="tool_adjust">Adjust</string>
+    <string name="tool_paint">Paint &amp; Text</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_done">Done</string>
+    <string name="action_reset">Reset</string>
+    <string name="action_save">Save</string>
+    <string name="action_undo">Undo</string>
+    <string name="action_new_photo">Open</string>
+    <string name="action_add_text">Text</string>
+    <string name="action_clear">Clear</string>
+    <string name="saved_to_gallery">Saved to Gallery</string>
+    <string name="save_failed">Failed to save image</string>
+    <string name="load_failed">Failed to load image</string>
+    <string name="tab_tune">Tune</string>
+    <string name="tab_curves">Curves</string>
+    <string name="tab_blur">Blur</string>
+    <string name="blur_off">Off</string>
+    <string name="blur_radial">Radial</string>
+    <string name="blur_linear">Linear</string>
+    <string name="enter_text_hint">Type text…</string>
+    <string name="add_text_title">Add Text</string>
+</resources>
