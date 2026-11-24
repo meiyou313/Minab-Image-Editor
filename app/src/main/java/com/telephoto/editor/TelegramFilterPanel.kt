@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PointF
+import android.graphics.PorterDuff
 import android.graphics.SurfaceTexture
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
@@ -14,6 +15,7 @@ import android.view.TextureView
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import org.telegram.messenger.AndroidUtilities
@@ -29,6 +31,10 @@ import java.util.concurrent.Executors
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+/**
+ * Telegram-styled Adjust / Filters / Curves / Blur screen backed by Telegram's real OpenGL ES 2.0 FilterGLThread & FilterShaders.
+ * Bottom row matches Telegram's exact icon layout: `✕` | Tune | Curves | Blur | `✓`
+ */
 @SuppressLint("ClickableViewAccessibility")
 class TelegramFilterPanel(
     context: Context,
@@ -92,7 +98,6 @@ class TelegramFilterPanel(
     private val curvesControl: PhotoFilterCurvesControl
     private val blurControl: PhotoFilterBlurControl
 
-    private val seekBarContainer: LinearLayout
     private val toolTitleText: TextView
     private val toolValueText: TextView
     private val seekBar: PhotoEditorSeekBar
@@ -102,7 +107,7 @@ class TelegramFilterPanel(
     private val tunePanel: LinearLayout
     private val curvesPanel: LinearLayout
     private val blurPanel: LinearLayout
-    private val tabButtons = mutableMapOf<SubTab, TextView>()
+    private val tabIcons = mutableMapOf<SubTab, ImageView>()
     private val curveChannelButtons = mutableListOf<TextView>()
     private val blurModeButtons = mutableListOf<TextView>()
 
@@ -114,7 +119,7 @@ class TelegramFilterPanel(
         }
         addView(root, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
-        // Preview stage hosting TextureView + Curves + Blur overlays
+        // Preview stage
         previewContainer = FrameLayout(context).apply {
             setBackgroundColor(Color.BLACK)
         }
@@ -150,10 +155,7 @@ class TelegramFilterPanel(
                 glThread?.requestRender(false, true, false)
             }
         }
-        previewContainer.addView(
-            curvesControl,
-            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-        )
+        previewContainer.addView(curvesControl, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
         blurControl = PhotoFilterBlurControl(context).apply {
             visibility = View.GONE
@@ -165,50 +167,23 @@ class TelegramFilterPanel(
                 glThread?.requestRender(false, true, false)
             }
         }
-        previewContainer.addView(
-            blurControl,
-            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-        )
+        previewContainer.addView(blurControl, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
-        // Bottom control surface
+        // Bottom control surface (pure black like Telegram)
         val bottomPanel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFF121212.toInt())
+            setBackgroundColor(Color.BLACK)
         }
         root.addView(bottomPanel, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-
-        // Sub-tabs: Tune / Curves / Blur
-        val tabRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(8f), AndroidUtilities.dp(12f), AndroidUtilities.dp(4f))
-        }
-        listOf(
-            SubTab.TUNE to context.getString(R.string.tab_tune),
-            SubTab.CURVES to context.getString(R.string.tab_curves),
-            SubTab.BLUR to context.getString(R.string.tab_blur)
-        ).forEach { (tab, title) ->
-            val tv = TextView(context).apply {
-                text = title
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                typeface = AndroidUtilities.bold()
-                gravity = Gravity.CENTER
-                setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(6f), AndroidUtilities.dp(16f), AndroidUtilities.dp(6f))
-                setOnClickListener { switchTab(tab) }
-            }
-            tabButtons[tab] = tv
-            tabRow.addView(tv, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        }
-        bottomPanel.addView(tabRow)
 
         // TUNE PANEL
         tunePanel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
 
-        seekBarContainer = LinearLayout(context).apply {
+        val seekBarBox = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(4f), AndroidUtilities.dp(16f), AndroidUtilities.dp(4f))
+            setPadding(AndroidUtilities.dp(18f), AndroidUtilities.dp(6f), AndroidUtilities.dp(18f), AndroidUtilities.dp(2f))
         }
         val labelRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -222,11 +197,12 @@ class TelegramFilterPanel(
         toolValueText = TextView(context).apply {
             setTextColor(0xFF4DA3FF.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = AndroidUtilities.bold()
             gravity = Gravity.END
         }
         labelRow.addView(toolTitleText, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         labelRow.addView(toolValueText, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
-        seekBarContainer.addView(labelRow)
+        seekBarBox.addView(labelRow)
 
         seekBar = PhotoEditorSeekBar(context).apply {
             setDelegate { _, progress ->
@@ -239,10 +215,7 @@ class TelegramFilterPanel(
                 }
             }
         }
-        seekBarContainer.addView(
-            seekBar,
-            LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, AndroidUtilities.dp(40f))
-        )
+        seekBarBox.addView(seekBar, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, AndroidUtilities.dp(40f)))
 
         tintColorRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -254,31 +227,30 @@ class TelegramFilterPanel(
             val dot = View(context).apply {
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(if (color == 0) 0xFF333333.toInt() else color)
-                    setStroke(AndroidUtilities.dp(2f), if (color == 0) 0xFFAAAAAA.toInt() else Color.WHITE)
+                    setColor(if (color == 0) 0xFF2C2C2E.toInt() else color)
+                    setStroke(AndroidUtilities.dp(2f), if (color == 0) 0xFF888888.toInt() else Color.WHITE)
                 }
                 setOnClickListener {
                     val tool = tuneTools[selectedToolIndex]
                     if (tool.isTintColor) {
                         tool.setter(filterState, color)
-                        toolValueText.text = if (color == 0) "Off" else "Active"
+                        toolValueText.text = if (color == 0) "Off" else "On"
                         updateChipStates()
                         glThread?.requestRender(false, true, false)
                     }
                 }
             }
-            val size = AndroidUtilities.dp(28f)
-            val lp = LinearLayout.LayoutParams(size, size).apply {
+            val size = AndroidUtilities.dp(26f)
+            tintColorRow.addView(dot, LinearLayout.LayoutParams(size, size).apply {
                 setMargins(AndroidUtilities.dp(5f), 0, AndroidUtilities.dp(5f), 0)
-            }
-            tintColorRow.addView(dot, lp)
+            })
         }
-        seekBarContainer.addView(tintColorRow)
-        tunePanel.addView(seekBarContainer)
+        seekBarBox.addView(tintColorRow)
+        tunePanel.addView(seekBarBox)
 
         val chipScroll = HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
-            setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(4f), AndroidUtilities.dp(10f), AndroidUtilities.dp(6f))
+            setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(4f), AndroidUtilities.dp(10f), AndroidUtilities.dp(8f))
         }
         val chipRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -287,14 +259,14 @@ class TelegramFilterPanel(
             val chip = TextView(context).apply {
                 text = tool.label
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(7f), AndroidUtilities.dp(12f), AndroidUtilities.dp(7f))
+                typeface = AndroidUtilities.bold()
+                setPadding(AndroidUtilities.dp(13f), AndroidUtilities.dp(7f), AndroidUtilities.dp(13f), AndroidUtilities.dp(7f))
                 setOnClickListener { selectTuneTool(idx) }
             }
-            val lp = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                setMargins(AndroidUtilities.dp(4f), 0, AndroidUtilities.dp(4f), 0)
-            }
             toolChipViews.add(chip)
-            chipRow.addView(chip, lp)
+            chipRow.addView(chip, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                setMargins(AndroidUtilities.dp(4f), 0, AndroidUtilities.dp(4f), 0)
+            })
         }
         chipScroll.addView(chipRow)
         tunePanel.addView(chipScroll)
@@ -305,7 +277,7 @@ class TelegramFilterPanel(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             visibility = View.GONE
-            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(16f), AndroidUtilities.dp(16f), AndroidUtilities.dp(16f))
+            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(14f), AndroidUtilities.dp(16f), AndroidUtilities.dp(14f))
         }
         listOf(
             PhotoFilterView.CurvesToolValue.CurvesTypeLuminance to "All",
@@ -335,7 +307,7 @@ class TelegramFilterPanel(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             visibility = View.GONE
-            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(16f), AndroidUtilities.dp(16f), AndroidUtilities.dp(16f))
+            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(14f), AndroidUtilities.dp(16f), AndroidUtilities.dp(14f))
         }
         listOf(
             0 to context.getString(R.string.blur_off),
@@ -361,32 +333,47 @@ class TelegramFilterPanel(
         }
         bottomPanel.addView(blurPanel)
 
-        // Bottom Action Bar: Cancel / Reset / Done
-        val actionBar = LinearLayout(context).apply {
+        // Telegram Bottom Row: `✕` | Tune Icon | Curves Icon | Blur Icon | `✓`
+        val bottomRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(4f), AndroidUtilities.dp(16f), AndroidUtilities.dp(10f))
+            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(2f), AndroidUtilities.dp(12f), AndroidUtilities.dp(8f))
         }
-        val cancelBtn = makeActionButton(context.getString(R.string.action_cancel), 0xFFE0E0E0.toInt()) {
-            cleanup()
-            onCancel()
+
+        val closeBtn = ImageView(context).apply {
+            setImageResource(R.drawable.ic_tg_close)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f))
+            setOnClickListener {
+                cleanup()
+                onCancel()
+            }
         }
-        val resetBtn = makeActionButton(context.getString(R.string.action_reset), 0xFFFFB74D.toInt()) {
-            filterState.reset()
-            blurControl.visibility = View.GONE
-            curvesControl.invalidate()
-            selectTuneTool(selectedToolIndex)
-            updateCurveChannelStyles()
-            updateBlurModeStyles()
-            glThread?.requestRender(true, true, false)
+        bottomRow.addView(closeBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(46f), AndroidUtilities.dp(46f)))
+
+        listOf(
+            SubTab.TUNE to R.drawable.ic_tg_tune,
+            SubTab.CURVES to R.drawable.ic_tg_curves,
+            SubTab.BLUR to R.drawable.ic_tg_blur_drop
+        ).forEach { (tab, iconRes) ->
+            val iv = ImageView(context).apply {
+                setImageResource(iconRes)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f))
+                setOnClickListener { switchTab(tab) }
+            }
+            tabIcons[tab] = iv
+            bottomRow.addView(iv, LinearLayout.LayoutParams(0, AndroidUtilities.dp(46f), 1f))
         }
-        val doneBtn = makeActionButton(context.getString(R.string.action_done), 0xFF4DA3FF.toInt(), bold = true) {
-            bakeAndFinish()
+
+        val checkBtn = ImageView(context).apply {
+            setImageResource(R.drawable.ic_tg_check)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f))
+            setOnClickListener { bakeAndFinish() }
         }
-        actionBar.addView(cancelBtn, LinearLayout.LayoutParams(0, AndroidUtilities.dp(46f), 1f))
-        actionBar.addView(resetBtn, LinearLayout.LayoutParams(0, AndroidUtilities.dp(46f), 1f))
-        actionBar.addView(doneBtn, LinearLayout.LayoutParams(0, AndroidUtilities.dp(46f), 1f))
-        bottomPanel.addView(actionBar)
+        bottomRow.addView(checkBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(46f), AndroidUtilities.dp(46f)))
+        bottomPanel.addView(bottomRow)
 
         setupTextureListener()
         selectTuneTool(0)
@@ -471,8 +458,12 @@ class TelegramFilterPanel(
         curvesControl.visibility = if (tab == SubTab.CURVES) View.VISIBLE else View.GONE
         blurControl.visibility = if (tab == SubTab.BLUR && filterState.blurType != 0) View.VISIBLE else View.GONE
 
-        tabButtons.forEach { (t, btn) ->
-            btn.setTextColor(if (t == tab) 0xFF4DA3FF.toInt() else 0xFF9E9E9E.toInt())
+        tabIcons.forEach { (t, icon) ->
+            icon.setColorFilter(
+                if (t == tab) 0xFF4DA3FF.toInt() else 0xFFFFFFFF.toInt(),
+                PorterDuff.Mode.SRC_IN
+            )
+            icon.alpha = if (t == tab) 1.0f else 0.7f
         }
     }
 
@@ -484,7 +475,7 @@ class TelegramFilterPanel(
             seekBar.visibility = View.GONE
             tintColorRow.visibility = View.VISIBLE
             val current = tool.getter(filterState)
-            toolValueText.text = if (current == 0) "Off" else "Active"
+            toolValueText.text = if (current == 0) "Off" else "On"
         } else {
             tintColorRow.visibility = View.GONE
             seekBar.visibility = View.VISIBLE
@@ -512,9 +503,9 @@ class TelegramFilterPanel(
                 cornerRadius = AndroidUtilities.dp(16f).toFloat()
                 setColor(
                     when {
-                        selected -> 0xFF4DA3FF.toInt()
+                        selected -> Color.WHITE
                         activeValue -> 0xFF1A2E47.toInt()
-                        else -> 0xFF242424.toInt()
+                        else -> 0xFF1C1C1E.toInt()
                     }
                 )
             }
@@ -556,16 +547,5 @@ class TelegramFilterPanel(
         glThread?.shutdown()
         glThread = null
         exportExecutor.shutdownNow()
-    }
-
-    private fun makeActionButton(label: String, color: Int, bold: Boolean = false, onClick: () -> Unit): TextView {
-        return TextView(context).apply {
-            text = label
-            setTextColor(color)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            if (bold) typeface = AndroidUtilities.bold()
-            gravity = Gravity.CENTER
-            setOnClickListener { onClick() }
-        }
     }
 }

@@ -26,6 +26,13 @@ import org.telegram.messenger.R
 import java.util.ArrayDeque
 import java.util.concurrent.Executors
 
+/**
+ * Telegram-identical Photo Editor shell (frames 00:03 - 00:14, 00:35, 01:41):
+ * - Top bar: `←` Back + Title + Undo/Reset when modified
+ * - Full-bleed pure-black photo canvas
+ * - Bottom bar: Floating dark rounded pill with [Crop | Draw/Paint | Adjust] icons + Telegram blue circular Save button
+ *   (No "Add a caption..." or "SD" messaging buttons per user's instruction)
+ */
 class MainActivity : AppCompatActivity() {
 
     private val ioExecutor = Executors.newSingleThreadExecutor()
@@ -38,9 +45,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var landingView: LinearLayout
     private lateinit var editorShell: LinearLayout
     private lateinit var previewImageView: ImageView
-    private lateinit var undoButton: TextView
-    private lateinit var resetButton: TextView
-    private lateinit var saveButton: TextView
+    private lateinit var undoIconBtn: ImageView
+    private lateinit var resetTextBtn: TextView
+    private lateinit var saveCircleBtn: ImageView
     private lateinit var activePanelContainer: FrameLayout
 
     private var activeFilterPanel: TelegramFilterPanel? = null
@@ -93,6 +100,8 @@ class MainActivity : AppCompatActivity() {
             override fun handleOnBackPressed() {
                 if (activePanelContainer.visibility == View.VISIBLE) {
                     closeActivePanel()
+                } else if (editorShell.visibility == View.VISIBLE) {
+                    launchPhotoPicker()
                 } else {
                     isEnabled = false
                     onBackPressedDispatcher.onBackPressed()
@@ -150,7 +159,7 @@ class MainActivity : AppCompatActivity() {
 
         val subtitle = TextView(this).apply {
             text = getString(R.string.landing_subtitle)
-            setTextColor(0xFFAAAAAA.toInt())
+            setTextColor(0xFF9E9E9E.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             gravity = Gravity.CENTER
             setPadding(0, AndroidUtilities.dp(12f), 0, AndroidUtilities.dp(32f))
@@ -158,13 +167,13 @@ class MainActivity : AppCompatActivity() {
 
         val pickBtn = TextView(this).apply {
             text = getString(R.string.pick_photo)
-            setTextColor(Color.BLACK)
+            setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             typeface = AndroidUtilities.bold()
             gravity = Gravity.CENTER
             setPadding(AndroidUtilities.dp(28f), AndroidUtilities.dp(14f), AndroidUtilities.dp(28f), AndroidUtilities.dp(14f))
             background = GradientDrawable().apply {
-                setColor(0xFF4DA3FF.toInt())
+                setColor(0xFF2AABEE.toInt())
                 cornerRadius = AndroidUtilities.dp(26f).toFloat()
             }
             setOnClickListener { launchPhotoPicker() }
@@ -186,37 +195,59 @@ class MainActivity : AppCompatActivity() {
     private fun buildEditorShell() {
         editorShell = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.BLACK)
             visibility = View.GONE
         }
 
-        // Top Bar
+        // === TOP BAR (Exact Telegram PhotoViewer bar: `←` + Title + Undo/Reset) ===
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(0xFF141414.toInt())
-            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(8f), AndroidUtilities.dp(12f), AndroidUtilities.dp(8f))
+            setBackgroundColor(Color.BLACK)
+            setPadding(AndroidUtilities.dp(8f), AndroidUtilities.dp(4f), AndroidUtilities.dp(14f), AndroidUtilities.dp(4f))
         }
 
-        val openBtn = makeBarButton(getString(R.string.action_new_photo), Color.WHITE) {
-            launchPhotoPicker()
-        }
-        undoButton = makeBarButton(getString(R.string.action_undo), Color.WHITE) {
-            performGlobalUndo()
-        }
-        resetButton = makeBarButton(getString(R.string.action_reset), 0xFFFFB74D.toInt()) {
-            resetToOriginal()
-        }
-        saveButton = makeBarButton(getString(R.string.action_save), 0xFF4DA3FF.toInt(), bold = true) {
-            saveCurrentImage()
+        val backBtn = ImageView(this).apply {
+            setImageResource(R.drawable.ic_tg_back)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f))
+            setOnClickListener { launchPhotoPicker() }
         }
 
-        topBar.addView(openBtn, LinearLayout.LayoutParams(0, AndroidUtilities.dp(44f), 1f))
-        topBar.addView(undoButton, LinearLayout.LayoutParams(0, AndroidUtilities.dp(44f), 1f))
-        topBar.addView(resetButton, LinearLayout.LayoutParams(0, AndroidUtilities.dp(44f), 1f))
-        topBar.addView(saveButton, LinearLayout.LayoutParams(0, AndroidUtilities.dp(44f), 1f))
-        editorShell.addView(topBar)
+        val titleView = TextView(this).apply {
+            text = getString(R.string.app_name)
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
+            typeface = AndroidUtilities.bold()
+            setPadding(AndroidUtilities.dp(10f), 0, 0, 0)
+        }
 
-        // Image Preview
+        undoIconBtn = ImageView(this).apply {
+            setImageResource(R.drawable.ic_tg_undo)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f))
+            visibility = View.GONE
+            setOnClickListener { performGlobalUndo() }
+        }
+
+        resetTextBtn = TextView(this).apply {
+            text = getString(R.string.action_reset)
+            setTextColor(0xFF4DA3FF.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = AndroidUtilities.bold()
+            gravity = Gravity.CENTER
+            setPadding(AndroidUtilities.dp(8f), 0, AndroidUtilities.dp(4f), 0)
+            visibility = View.GONE
+            setOnClickListener { resetToOriginal() }
+        }
+
+        topBar.addView(backBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(46f), AndroidUtilities.dp(46f)))
+        topBar.addView(titleView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        topBar.addView(undoIconBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(44f), AndroidUtilities.dp(44f)))
+        topBar.addView(resetTextBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, AndroidUtilities.dp(44f)))
+        editorShell.addView(topBar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, AndroidUtilities.dp(54f)))
+
+        // === FULL-BLEED IMAGE PREVIEW ===
         previewImageView = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
             setBackgroundColor(Color.BLACK)
@@ -226,27 +257,54 @@ class MainActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         )
 
-        // Bottom Tool Bar (Crop / Adjust / Paint & Text)
-        val bottomBar = LinearLayout(this).apply {
+        // === BOTTOM FLOATING PILL + BLUE CIRCLE SAVE BUTTON (frame 00:05) ===
+        val bottomRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(0xFF141414.toInt())
-            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(10f), AndroidUtilities.dp(12f), AndroidUtilities.dp(14f))
+            setBackgroundColor(Color.BLACK)
+            setPadding(AndroidUtilities.dp(20f), AndroidUtilities.dp(12f), AndroidUtilities.dp(16f), AndroidUtilities.dp(16f))
         }
 
-        val cropBtn = makeToolPill(getString(R.string.tool_crop)) { openCropMode() }
-        val adjustBtn = makeToolPill(getString(R.string.tool_adjust)) { openAdjustMode() }
-        val paintBtn = makeToolPill(getString(R.string.tool_paint)) { openPaintMode() }
-
-        val lp = {
-            LinearLayout.LayoutParams(0, AndroidUtilities.dp(48f), 1f).apply {
-                setMargins(AndroidUtilities.dp(6f), 0, AndroidUtilities.dp(6f), 0)
+        val toolPill = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(AndroidUtilities.dp(12f), 0, AndroidUtilities.dp(12f), 0)
+            background = GradientDrawable().apply {
+                setColor(0xFF1C1C1E.toInt())
+                cornerRadius = AndroidUtilities.dp(28f).toFloat()
             }
         }
-        bottomBar.addView(cropBtn, lp())
-        bottomBar.addView(adjustBtn, lp())
-        bottomBar.addView(paintBtn, lp())
-        editorShell.addView(bottomBar)
+
+        val cropIcon = makePillIcon(R.drawable.ic_tg_crop) { openCropMode() }
+        val drawIcon = makePillIcon(R.drawable.ic_tg_draw) { openPaintMode() }
+        val tuneIcon = makePillIcon(R.drawable.ic_tg_tune) { openAdjustMode() }
+
+        toolPill.addView(cropIcon, LinearLayout.LayoutParams(0, AndroidUtilities.dp(50f), 1f))
+        toolPill.addView(drawIcon, LinearLayout.LayoutParams(0, AndroidUtilities.dp(50f), 1f))
+        toolPill.addView(tuneIcon, LinearLayout.LayoutParams(0, AndroidUtilities.dp(50f), 1f))
+
+        saveCircleBtn = ImageView(this).apply {
+            setImageResource(R.drawable.ic_tg_save)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(12f), AndroidUtilities.dp(12f), AndroidUtilities.dp(12f))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFF2AABEE.toInt())
+            }
+            setOnClickListener { saveCurrentImage() }
+        }
+
+        bottomRow.addView(
+            toolPill,
+            LinearLayout.LayoutParams(0, AndroidUtilities.dp(52f), 1f).apply {
+                rightMargin = AndroidUtilities.dp(14f)
+            }
+        )
+        bottomRow.addView(
+            saveCircleBtn,
+            LinearLayout.LayoutParams(AndroidUtilities.dp(50f), AndroidUtilities.dp(50f))
+        )
+        editorShell.addView(bottomRow)
 
         rootContainer.addView(
             editorShell,
@@ -255,6 +313,15 @@ class MainActivity : AppCompatActivity() {
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         )
+    }
+
+    private fun makePillIcon(iconRes: Int, onClick: () -> Unit): ImageView {
+        return ImageView(this).apply {
+            setImageResource(iconRes)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(AndroidUtilities.dp(13f), AndroidUtilities.dp(13f), AndroidUtilities.dp(13f), AndroidUtilities.dp(13f))
+            setOnClickListener { onClick() }
+        }
     }
 
     private fun launchPhotoPicker() {
@@ -386,51 +453,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateTopBarState() {
         val canUndo = historyStack.isNotEmpty()
-        undoButton.isEnabled = canUndo
-        undoButton.alpha = if (canUndo) 1f else 0.4f
-        resetButton.isEnabled = canUndo
-        resetButton.alpha = if (canUndo) 1f else 0.4f
+        undoIconBtn.visibility = if (canUndo) View.VISIBLE else View.GONE
+        resetTextBtn.visibility = if (canUndo) View.VISIBLE else View.GONE
     }
 
     private fun saveCurrentImage() {
         val bmp = currentBitmap ?: return
-        saveButton.isEnabled = false
+        saveCircleBtn.isEnabled = false
+        saveCircleBtn.alpha = 0.6f
         ioExecutor.execute {
             val saved = BitmapUtils.saveToGallery(this, bmp)
             runOnUiThread {
-                saveButton.isEnabled = true
+                saveCircleBtn.isEnabled = true
+                saveCircleBtn.alpha = 1f
                 Toast.makeText(
                     this,
                     if (saved != null) R.string.saved_to_gallery else R.string.save_failed,
                     Toast.LENGTH_SHORT
                 ).show()
             }
-        }
-    }
-
-    private fun makeBarButton(label: String, color: Int, bold: Boolean = false, onClick: () -> Unit): TextView {
-        return TextView(this).apply {
-            text = label
-            setTextColor(color)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            if (bold) typeface = AndroidUtilities.bold()
-            gravity = Gravity.CENTER
-            setOnClickListener { onClick() }
-        }
-    }
-
-    private fun makeToolPill(label: String, onClick: () -> Unit): TextView {
-        return TextView(this).apply {
-            text = label
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            typeface = AndroidUtilities.bold()
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                setColor(0xFF232323.toInt())
-                cornerRadius = AndroidUtilities.dp(24f).toFloat()
-            }
-            setOnClickListener { onClick() }
         }
     }
 }

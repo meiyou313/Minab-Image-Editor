@@ -24,6 +24,7 @@ public class AndroidUtilities {
     public static DisplayMetrics displayMetrics = new DisplayMetrics();
     public static int statusBarHeight = 0;
     public static float touchSlop = 8f;
+    public static final RectF rectTmp = new RectF();
 
     public static void init(Context context) {
         if (context == null) return;

@@ -5,14 +5,19 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import org.telegram.messenger.AndroidUtilities
-import org.telegram.messenger.R
 import org.telegram.ui.Components.Crop.CropRotationWheel
 import org.telegram.ui.Components.Crop.CropView
 
+/**
+ * Pixel-faithful Telegram Crop screen (frames 00:15 - 00:34):
+ * - Pure black canvas with Telegram's real CropView & CropRotationWheel
+ * - Bottom row: CANCEL (white) | RESET (white, hidden until modified) | CROP (Telegram blue)
+ */
 class TelegramCropPanel(
     context: Context,
     private val sourceBitmap: Bitmap,
@@ -27,17 +32,17 @@ class TelegramCropPanel(
     init {
         setBackgroundColor(Color.BLACK)
 
-        val bottomBarHeight = AndroidUtilities.dp(132f)
+        val bottomBarHeight = AndroidUtilities.dp(128f)
 
         cropView = CropView(context).apply {
             setBottomPadding(bottomBarHeight.toFloat())
-            setTopPadding(AndroidUtilities.dp(12f).toFloat())
+            setTopPadding(AndroidUtilities.dp(10f).toFloat())
         }
         addView(cropView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
         val bottomContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xE6101010.toInt())
+            setBackgroundColor(Color.BLACK)
         }
 
         rotationWheel = CropRotationWheel(context).apply {
@@ -54,23 +59,22 @@ class TelegramCropPanel(
         val actionBar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(AndroidUtilities.dp(16f), 0, AndroidUtilities.dp(16f), AndroidUtilities.dp(8f))
+            setPadding(AndroidUtilities.dp(20f), 0, AndroidUtilities.dp(20f), AndroidUtilities.dp(8f))
         }
 
-        val cancelButton = makeActionButton(context.getString(R.string.action_cancel), 0xFFE0E0E0.toInt()) {
+        val cancelButton = makeActionButton("CANCEL", Color.WHITE, Gravity.START or Gravity.CENTER_VERTICAL) {
             cropView.stop()
             onCancel()
         }
 
-        resetButton = makeActionButton(context.getString(R.string.action_reset), 0xFF4DA3FF.toInt()) {
+        resetButton = makeActionButton("RESET", Color.WHITE, Gravity.CENTER) {
             cropView.reset()
             rotationWheel.reset(true)
         }.apply {
-            alpha = 0.45f
-            isEnabled = false
+            visibility = View.INVISIBLE
         }
 
-        val doneButton = makeActionButton(context.getString(R.string.action_done), 0xFF4DA3FF.toInt(), bold = true) {
+        val cropButton = makeActionButton("CROP", 0xFF4DA3FF.toInt(), Gravity.END or Gravity.CENTER_VERTICAL) {
             val cropped = cropView.getCroppedBitmap() ?: sourceBitmap
             cropView.stop()
             onDone(cropped)
@@ -78,13 +82,13 @@ class TelegramCropPanel(
 
         actionBar.addView(cancelButton, LinearLayout.LayoutParams(0, AndroidUtilities.dp(48f), 1f))
         actionBar.addView(resetButton, LinearLayout.LayoutParams(0, AndroidUtilities.dp(48f), 1f))
-        actionBar.addView(doneButton, LinearLayout.LayoutParams(0, AndroidUtilities.dp(48f), 1f))
+        actionBar.addView(cropButton, LinearLayout.LayoutParams(0, AndroidUtilities.dp(48f), 1f))
 
         bottomContainer.addView(
             actionBar,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                AndroidUtilities.dp(56f)
+                AndroidUtilities.dp(52f)
             )
         )
 
@@ -95,8 +99,7 @@ class TelegramCropPanel(
 
         cropView.setListener(object : CropView.CropViewListener {
             override fun onChange(reset: Boolean) {
-                resetButton.isEnabled = !reset
-                resetButton.alpha = if (reset) 0.45f else 1.0f
+                resetButton.visibility = if (reset) View.INVISIBLE else View.VISIBLE
             }
 
             override fun onUpdate() {}
@@ -141,13 +144,14 @@ class TelegramCropPanel(
         }
     }
 
-    private fun makeActionButton(label: String, color: Int, bold: Boolean = false, onClick: () -> Unit): TextView {
+    private fun makeActionButton(label: String, color: Int, align: Int, onClick: () -> Unit): TextView {
         return TextView(context).apply {
             text = label
             setTextColor(color)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            if (bold) typeface = AndroidUtilities.bold()
-            gravity = Gravity.CENTER
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = AndroidUtilities.bold()
+            letterSpacing = 0.04f
+            gravity = align
             setOnClickListener { onClick() }
         }
     }
