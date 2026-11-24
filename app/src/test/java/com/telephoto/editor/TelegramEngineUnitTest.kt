@@ -126,7 +126,7 @@ class TelegramEngineUnitTest {
             true, 0.1f, -0.2f, 15f, 90, 1.5f, 1.2f, 0.8f, 0.9f, 0.85f, 10f, 20f, true
         )
         assertTrue(transform.hasViewTransform())
-        assertEquals(15f, transform.cropAreaRotation, 0.001f)
+        assertEquals(15f, transform.rotation, 0.001f)
         assertEquals(90, transform.orientation)
         assertTrue(transform.isMirrored)
 
