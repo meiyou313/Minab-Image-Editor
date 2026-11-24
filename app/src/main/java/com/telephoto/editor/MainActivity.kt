@@ -19,6 +19,8 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.telegram.messenger.AndroidUtilities
 import org.telegram.messenger.R
 import java.util.ArrayDeque
@@ -62,6 +64,14 @@ class MainActivity : AppCompatActivity() {
 
         rootContainer = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { view, windowInsets ->
+            val bars = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            AndroidUtilities.statusBarHeight = 0
+            windowInsets
         }
         setContentView(rootContainer)
 

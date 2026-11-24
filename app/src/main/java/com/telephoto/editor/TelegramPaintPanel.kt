@@ -154,7 +154,13 @@ class TelegramPaintPanel(
         )
 
         val painting = Painting(paintSize, sourceBitmap, 0, null)
-        renderView = RenderView(context, painting, sourceBitmap, null, null).apply {
+        val blurW = (paintSize.width / 4f).roundToInt().coerceAtLeast(32)
+        val blurH = (paintSize.height / 4f).roundToInt().coerceAtLeast(32)
+        val blurSource = Bitmap.createScaledBitmap(sourceBitmap, blurW, blurH, true)
+            .let { if (it.config == Bitmap.Config.ARGB_8888 && it.isMutable) it else it.copy(Bitmap.Config.ARGB_8888, true) }
+        org.telegram.messenger.Utilities.stackBlurBitmap(blurSource, 16)
+
+        renderView = RenderView(context, painting, sourceBitmap, blurSource, null).apply {
             isOpaque = false
             setQueue(paintQueue)
             setUndoStore(undoStore)
