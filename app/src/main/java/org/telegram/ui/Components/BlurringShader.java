@@ -3,6 +3,9 @@ package org.telegram.ui.Components;
 import android.graphics.Bitmap;
 import android.graphics.Matrix;
 
+import javax.microedition.khronos.egl.EGL10;
+import javax.microedition.khronos.egl.EGLContext;
+
 public class BlurringShader {
 
     public static class BlurManager {
@@ -18,6 +21,22 @@ public class BlurringShader {
         }
 
         public void invalidateFallbackBlur() {
+        }
+
+        public EGLContext getParentContext() {
+            return EGL10.EGL_NO_CONTEXT;
+        }
+
+        public void acquiredContext(EGLContext context) {
+        }
+
+        public void destroyedContext(EGLContext context) {
+        }
+
+        public void attach(Runnable runnable) {
+        }
+
+        public void detach(Runnable runnable) {
         }
     }
 
