@@ -92,6 +92,14 @@ public class PhotoFilterBlurControl extends FrameLayout {
         invalidate();
     }
 
+    public void reset() {
+        centerPoint.set(0.5f, 0.5f);
+        falloff = 0.15f;
+        size = 0.35f;
+        angle = 0.0f;
+        invalidate();
+    }
+
     public void setDelegate(PhotoFilterLinearBlurControlDelegate delegate) {
         this.delegate = delegate;
     }

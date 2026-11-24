@@ -66,9 +66,17 @@ public class MediaController {
             grainValue = 0f;
             blurType = 0;
             sharpenValue = 0f;
-            curvesToolValue = new PhotoFilterView.CurvesToolValue();
+            if (curvesToolValue == null) {
+                curvesToolValue = new PhotoFilterView.CurvesToolValue();
+            } else {
+                curvesToolValue.reset();
+            }
             blurExcludeSize = 0.35f;
-            blurExcludePoint = new PointF(0.5f, 0.5f);
+            if (blurExcludePoint == null) {
+                blurExcludePoint = new PointF(0.5f, 0.5f);
+            } else {
+                blurExcludePoint.set(0.5f, 0.5f);
+            }
             blurExcludeBlurSize = 0.15f;
             blurAngle = (float) Math.PI / 2.0f;
         }

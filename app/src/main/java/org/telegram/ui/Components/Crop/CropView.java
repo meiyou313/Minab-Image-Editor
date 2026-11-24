@@ -477,8 +477,10 @@ public class CropView extends FrameLayout implements CropAreaView.AreaViewListen
     }
 
     public void show() {
+        isVisible = true;
         updateCropTransform();
-        //imageView.setVisibility(VISIBLE);
+        imageView.setVisibility(VISIBLE);
+        updateMatrix(true);
         areaView.setDimVisibility(true);
         areaView.setFrameVisibility(true, true);
         areaView.invalidate();
@@ -531,9 +533,35 @@ public class CropView extends FrameLayout implements CropAreaView.AreaViewListen
         overlayMatrix.postRotate(state.getOrientationOnly());
         state.getConcatMatrix(overlayMatrix);
         overlayMatrix.postTranslate(areaView.getCropCenterX(), areaView.getCropCenterY());
+
+        if (bitmap != null && imageView != null) {
+            Matrix viewMatrix = new Matrix();
+            viewMatrix.postTranslate(-bitmap.getWidth() / 2.0f, -bitmap.getHeight() / 2.0f);
+            if (state.mirrored) {
+                viewMatrix.postScale(-1.0f, 1.0f);
+            }
+            int cw = getCurrentWidth();
+            int ch = getCurrentHeight();
+            if (cw > 0 && ch > 0) {
+                float sc = Math.max(bitmap.getWidth(), bitmap.getHeight()) / (float) Math.max(cw, ch);
+                if (sc > 0 && Math.abs(sc - 1.0f) > 0.0001f) {
+                    viewMatrix.postScale(1.0f / sc, 1.0f / sc);
+                }
+            }
+            viewMatrix.postRotate(state.getOrientationOnly());
+            state.getConcatMatrix(viewMatrix);
+            viewMatrix.postTranslate(areaView.getCropCenterX(), areaView.getCropCenterY());
+            imageView.setImageMatrix(viewMatrix);
+            if (isVisible) {
+                imageView.setVisibility(VISIBLE);
+            }
+        }
+
         if (!freeform || isVisible || force) {
             updateCropTransform();
-            listener.onUpdate();
+            if (listener != null) {
+                listener.onUpdate();
+            }
         }
         invalidate();
     }

@@ -1110,14 +1110,16 @@ public class Painting {
                 w = pH;
             }
             float SCALE = 8;
-            if (bluredBitmap == null) {
-                bluredBitmap = Bitmap.createBitmap((int) (w / SCALE), (int) (h / SCALE), Bitmap.Config.ARGB_8888);
+            int bw = Math.max(1, (int) (w / SCALE));
+            int bh = Math.max(1, (int) (h / SCALE));
+            if (bluredBitmap == null || bluredBitmap.getWidth() != bw || bluredBitmap.getHeight() != bh) {
+                bluredBitmap = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
             }
             Canvas canvas = new Canvas(bluredBitmap);
             canvas.save();
             canvas.scale(1f / SCALE, 1f / SCALE);
-            if (imageBitmapPaint != null) {
-                imageBitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            if (imageBitmapPaint == null) {
+                imageBitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
             }
             canvas.save();
             canvas.rotate(imageBitmapRotation);
@@ -1139,10 +1141,11 @@ public class Painting {
                 }
             }
             Utilities.stackBlurBitmap(bluredBitmap, (int) SCALE);
-            if (bluredTexture != null) {
-                bluredTexture.cleanResources(false);
-            }
+            final Texture oldTex = bluredTexture;
             bluredTexture = new Texture(bluredBitmap);
+            if (oldTex != null && renderView != null) {
+                renderView.performInContext(() -> oldTex.cleanResources(false));
+            }
         }
     }
 

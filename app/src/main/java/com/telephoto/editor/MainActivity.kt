@@ -76,11 +76,14 @@ class MainActivity : AppCompatActivity() {
             val bars = windowInsets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            val ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+            val bottomInset = maxOf(bars.bottom, ime.bottom)
+            view.setPadding(bars.left, bars.top, bars.right, bottomInset)
             AndroidUtilities.statusBarHeight = 0
             windowInsets
         }
         setContentView(rootContainer)
+        ViewCompat.requestApplyInsets(rootContainer)
 
         buildLandingView()
         buildEditorShell()

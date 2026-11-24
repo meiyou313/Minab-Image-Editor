@@ -248,6 +248,23 @@ public class ShapeInput {
         }
     }
 
+    public boolean isActive() {
+        return shape != null;
+    }
+
+    public boolean toggleFill() {
+        boolean next = !PersistColorPalette.getInstance(UserConfig.selectedAccount).getFillShapes();
+        PersistColorPalette.getInstance(UserConfig.selectedAccount).setFillShapes(next);
+        if (shape != null) {
+            shape.fill = next;
+            renderView.getPainting().paintShape(shape, null);
+            if (invalidate != null) {
+                invalidate.run();
+            }
+        }
+        return next;
+    }
+
     public void start(int shapeType) {
         if (renderView == null || renderView.getPainting() == null) {
             return;

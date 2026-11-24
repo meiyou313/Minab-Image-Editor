@@ -3,12 +3,15 @@ package com.telephoto.editor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.telegram.messenger.MediaController
 import org.telegram.messenger.Utilities
 import org.telegram.ui.Components.Crop.CropTransform
 import org.telegram.ui.Components.FilterShaders
+import org.telegram.ui.Components.Paint.Brush
+import org.telegram.ui.Components.Paint.PersistColorPalette
 import org.telegram.ui.Components.Paint.UndoStore
 import org.telegram.ui.Components.PhotoFilterView
 import java.nio.ByteBuffer
@@ -146,5 +149,38 @@ class TelegramEngineUnitTest {
         assertEquals(state.transformRotation, cloned.transformRotation)
         assertEquals(state.mirrored, cloned.mirrored)
         assertEquals(state.width, cloned.width)
+    }
+
+    @Test
+    fun savedFilterStateReset_preservesCurvesReferenceInPlace() {
+        val state = MediaController.SavedFilterState()
+        val originalCurvesRef = state.curvesToolValue
+        val originalBlurPointRef = state.blurExcludePoint
+
+        state.curvesToolValue.redCurve.midtonesLevel = 72f
+        state.blurType = 2
+        state.blurExcludePoint.set(0.2f, 0.8f)
+        assertFalse(state.isEmpty())
+
+        state.reset()
+        assertTrue(state.isEmpty())
+        assertSame("reset() must keep CurvesToolValue reference for PhotoFilterCurvesControl", originalCurvesRef, state.curvesToolValue)
+        assertSame("reset() must keep blurExcludePoint reference", originalBlurPointRef, state.blurExcludePoint)
+        assertTrue(state.curvesToolValue.shouldBeSkipped())
+    }
+
+    @Test
+    fun telegramBrushesAndFillPalette_areConfiguredProperly() {
+        assertEquals(6, Brush.BRUSHES_LIST.size)
+        for (brush in Brush.BRUSHES_LIST) {
+            assertTrue("Brush default weight should be in (0, 1]", brush.defaultWeight in 0.01f..1.0f)
+            assertTrue("Brush scale should be positive", brush.scale > 0f)
+        }
+        val palette = PersistColorPalette.getInstance(0)
+        palette.fillShapes = false
+        assertFalse(palette.fillShapes)
+        palette.fillShapes = true
+        assertTrue(palette.fillShapes)
+        palette.fillShapes = false
     }
 }

@@ -48,6 +48,7 @@ class TextOverlayContainer(context: Context) : FrameLayout(context) {
 
     var onEntitySelected: ((TelegramTextEntityView?) -> Unit)? = null
     var onEditingChanged: ((Boolean) -> Unit)? = null
+    var interactionEnabled: Boolean = true
 
     var selectedEntity: TelegramTextEntityView? = null
         private set
@@ -55,6 +56,22 @@ class TextOverlayContainer(context: Context) : FrameLayout(context) {
     init {
         clipChildren = false
         clipToPadding = false
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (!interactionEnabled) return false
+        return super.dispatchTouchEvent(ev)
+    }
+
+    fun isAnyEditing(): Boolean = selectedEntity?.isInlineEditing == true
+
+    fun deleteSelectedEntity() {
+        val target = selectedEntity ?: return
+        target.endInlineEditing()
+        selectedEntity = null
+        removeView(target)
+        onEditingChanged?.invoke(false)
+        onEntitySelected?.invoke(null)
     }
 
     fun addInlineText(

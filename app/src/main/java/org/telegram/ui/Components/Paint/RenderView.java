@@ -265,6 +265,23 @@ public class RenderView extends TextureView {
         }
     }
 
+    public boolean hasActiveShape() {
+        return shapeInput != null && shapeInput.isActive();
+    }
+
+    public void commitShape() {
+        if (shapeInput != null && shapeInput.isActive()) {
+            shapeInput.stop();
+        }
+    }
+
+    public boolean toggleShapeFill() {
+        if (shapeInput != null) {
+            return shapeInput.toggleFill();
+        }
+        return false;
+    }
+
     private void updateTransform() {
         if (internal == null) {
             return;

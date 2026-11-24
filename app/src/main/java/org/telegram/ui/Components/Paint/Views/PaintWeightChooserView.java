@@ -182,6 +182,9 @@ public class PaintWeightChooserView extends View {
     @SuppressLint("ClickableViewAccessibility")
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        if (isViewHidden) {
+            return false;
+        }
         boolean detector = gestureDetector.onTouchEvent(event);
         if (event.getActionMasked() == MotionEvent.ACTION_UP || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
             isTouchInProgress = false;

@@ -75,6 +75,7 @@ class TelegramCropPanel(
         }
 
         val cropButton = makeActionButton("CROP", 0xFF4DA3FF.toInt(), Gravity.END or Gravity.CENTER_VERTICAL) {
+            if (!cropView.isReady) return@makeActionButton
             val cropped = cropView.getCroppedBitmap() ?: sourceBitmap
             cropView.stop()
             onDone(cropped)
@@ -140,6 +141,7 @@ class TelegramCropPanel(
 
         post {
             cropView.setBitmap(sourceBitmap, 0, true, false, null, null, null, null)
+            cropView.onShow()
             cropView.show()
         }
     }
