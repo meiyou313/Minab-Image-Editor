@@ -71,6 +71,12 @@ object AppTheme {
     val crashBannerBg: Int get() = if (isDark) 0xFF2C1618.toInt() else 0xFFFFECEB.toInt()
     val crashBannerText: Int get() = if (isDark) 0xFFFFD5D2.toInt() else 0xFFB42318.toInt()
 
+    // Samsung Tone Circular Icon Tokens
+    val toneCircleBg: Int get() = if (isDark) 0xFF1C1C1E.toInt() else 0xFFEDF1F5.toInt()
+    val toneCircleSelectedBg: Int get() = if (isDark) 0xFF263646.toInt() else 0xFFD9EEFC.toInt()
+    val toneCircleStroke: Int get() = if (isDark) 0x33FFFFFF else 0x24000000
+    val toneCircleSelectedStroke: Int get() = accent
+
     @Suppress("DEPRECATION")
     fun applySystemBars(activity: Activity) {
         val window = activity.window ?: return
