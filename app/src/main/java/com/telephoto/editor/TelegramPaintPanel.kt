@@ -247,8 +247,15 @@ class TelegramPaintPanel(
         )
 
         val painting = Painting(paintSize, sourceBitmap, 0, null)
-        // Pass blurBitmap = null when blurManager == null; Painting.setBrush(Blurer) generates live bluredTexture including strokes!
-        renderView = RenderView(context, painting, sourceBitmap, null, null).apply {
+        // Upstream Telegram passes a transparent paint layer bitmap to RenderView so strokes & eraser
+        // operate cleanly on the overlay while sourceBitmap stays untouched behind it in baseImageView.
+        val transparentPaintLayer = Bitmap.createBitmap(
+            paintSize.width.toInt(),
+            paintSize.height.toInt(),
+            Bitmap.Config.ARGB_8888
+        )
+        CrashLogManager.addBreadcrumb("Paint opened (${paintSize.width.toInt()}x${paintSize.height.toInt()})")
+        renderView = RenderView(context, painting, transparentPaintLayer, null, null).apply {
             isOpaque = false
             setQueue(paintQueue)
             setUndoStore(undoStore)
@@ -584,6 +591,7 @@ class TelegramPaintPanel(
                 setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(11f), AndroidUtilities.dp(24f), AndroidUtilities.dp(11f))
                 setOnClickListener {
                     hidePopups()
+                    CrashLogManager.addBreadcrumb("Selected shape: ${opt.label}")
                     renderView.setBrush(Brush.Shape.make(opt.shapeType))
                     applyBrushWeight(currentSwatch.brushWeight)
                     updateBrushHighlights(-1)
@@ -797,6 +805,7 @@ class TelegramPaintPanel(
     private fun selectBrush(index: Int) {
         selectedBrushIndex = index
         val brush = brushSlots[index].brush
+        CrashLogManager.addBreadcrumb("Selected brush #${index}: ${brush.javaClass.simpleName}")
         renderView.setBrush(brush)
         val weight = brushWeights[index]
         currentSwatch.brushWeight = weight

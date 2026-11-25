@@ -65,7 +65,7 @@ public class Shader {
 
     public void cleanResources() {
         if (program != 0) {
-            GLES20.glDeleteProgram(vertexShader);
+            GLES20.glDeleteProgram(program);
             program = 0;
         }
     }
@@ -81,7 +81,8 @@ public class Shader {
     }
 
     public int getUniform(String key) {
-        return uniformsMap.get(key);
+        Integer loc = uniformsMap.get(key);
+        return loc != null ? loc : -1;
     }
 
     private CompilationResult compileShader(int type, String shaderCode) {
@@ -124,7 +125,7 @@ public class Shader {
         }
 
         if (program != 0) {
-            GLES20.glDeleteProgram(vertexShader);
+            GLES20.glDeleteProgram(program);
         }
     }
 

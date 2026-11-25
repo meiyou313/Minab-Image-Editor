@@ -138,7 +138,11 @@ public class DispatchQueue extends Thread {
         if (threadPriority != THREAD_PRIORITY_DEFAULT) {
             Process.setThreadPriority(threadPriority);
         }
-        Looper.loop();
+        try {
+            Looper.loop();
+        } catch (Throwable t) {
+            FileLog.e("DispatchQueue [" + getName() + "] crashed", t);
+        }
     }
 
     public boolean isReady() {

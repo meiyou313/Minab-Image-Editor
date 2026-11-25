@@ -226,69 +226,88 @@ public class ShapeDetector {
         scheduled.set(false);
         busy.set(true);
 
-        long start = System.currentTimeMillis();
-
-        ArrayList<Point> initialPoints, points;
-        synchronized (this) {
-            if (this.points.size() < MIN_POINTS) {
-                busy.set(false);
+        try {
+            if (templates.isEmpty()) {
                 return;
             }
-            initialPoints = fullClone(this.points);
-        }
-        initialPoints = resample(initialPoints, pointsCount);
-        points = fullClone(initialPoints);
-        rotate(points, indicativeAngle(points));
-        Point centroid = centroid(points);
-        translate(points, -centroid.x, -centroid.y);
-        scale(points, squareSize);
+            long start = System.currentTimeMillis();
 
-        double bestDistance = Double.MAX_VALUE;
-        int bestShape = -1, a = -1;
-
-        Point pointsCentroid = centroid(points);
-        for (int i = 0; i < templates.size(); ++i) {
-            double templateDistance = distanceAtBestAngle(points, pointsCentroid, templates.get(i).points, -angleRange, angleRange, anglePrecision);
-            if (templateDistance < bestDistance) {
-                a = i;
-                bestDistance = templateDistance;
-                bestShape = templates.get(i).shapeType;
+            ArrayList<Point> initialPoints, points;
+            synchronized (this) {
+                if (this.points.size() < MIN_POINTS) {
+                    return;
+                }
+                initialPoints = fullClone(this.points);
             }
-        }
+            initialPoints = resample(initialPoints, pointsCount);
+            if (initialPoints.size() < 4) {
+                return;
+            }
+            points = fullClone(initialPoints);
+            rotate(points, indicativeAngle(points));
+            Point centroid = centroid(points);
+            translate(points, -centroid.x, -centroid.y);
+            scale(points, squareSize);
 
-        if ((1.0 - bestDistance / halfDiagonal) < minThreshold) {
-            bestShape = -1;
-        }
-        final int A = a;
-        final Shape shape = constructShape(bestShape, initialPoints);
-        if (BuildVars.LOGS_ENABLED) {
-            Log.i("shapedetector", "took " + (System.currentTimeMillis() - start) + "ms to " + (shape != null ? "" : "not ") + "detect a shape" + (shape != null ? " (template#" + A + " shape#" + bestShape + ")" : ""));
-        }
-        AndroidUtilities.runOnUIThread(() -> {
-            shapeDetected = shape != null;
+            double bestDistance = Double.MAX_VALUE;
+            int bestShape = -1, a = -1;
 
-            if (shapeDetected && A >= 0 && A < templates.size()) {
-                templatesUsageScore++;
-                templates.get(A).score++;
-                preferences.edit().putInt("score" + A, templates.get(A).score).putInt("scoreall", templatesUsageScore).apply();
-                toSave = null;
-            } else {
-                toSave = points;
+            Point pointsCentroid = centroid(points);
+            for (int i = 0; i < templates.size(); ++i) {
+                double templateDistance = distanceAtBestAngle(points, pointsCentroid, templates.get(i).points, -angleRange, angleRange, anglePrecision);
+                if (templateDistance < bestDistance) {
+                    a = i;
+                    bestDistance = templateDistance;
+                    bestShape = templates.get(i).shapeType;
+                }
             }
 
-            onShapeDetected.run(shape);
-        });
+            if ((1.0 - bestDistance / halfDiagonal) < minThreshold) {
+                bestShape = -1;
+            }
+            final int A = a;
+            final Shape shape = constructShape(bestShape, initialPoints);
+            if (BuildVars.LOGS_ENABLED) {
+                Log.i("shapedetector", "took " + (System.currentTimeMillis() - start) + "ms to " + (shape != null ? "" : "not ") + "detect a shape" + (shape != null ? " (template#" + A + " shape#" + bestShape + ")" : ""));
+            }
+            AndroidUtilities.runOnUIThread(() -> {
+                shapeDetected = shape != null;
 
-        busy.set(false);
+                if (shapeDetected && A >= 0 && A < templates.size()) {
+                    templatesUsageScore++;
+                    templates.get(A).score++;
+                    preferences.edit().putInt("score" + A, templates.get(A).score).putInt("scoreall", templatesUsageScore).apply();
+                    toSave = null;
+                } else {
+                    toSave = points;
+                }
+
+                onShapeDetected.run(shape);
+            });
+        } catch (Throwable t) {
+            FileLog.e("ShapeDetector.detect failed", t);
+        } finally {
+            busy.set(false);
+        }
     };
 
     private ArrayList<Point> resample(ArrayList<Point> initialPoints, int totalPoints) {
         ArrayList<Point> newPoints = new ArrayList<>();
+        if (initialPoints.isEmpty()) {
+            return newPoints;
+        }
         newPoints.add(initialPoints.get(0));
-        double interval = pathLength(initialPoints) / (totalPoints - 1);
+        double totalLen = pathLength(initialPoints);
+        if (totalLen <= 1e-3 || totalPoints <= 1) {
+            return newPoints;
+        }
+        double interval = totalLen / (totalPoints - 1);
         double length = 0.0;
-        for (int i = 1; i < initialPoints.size(); ++i) {
+        for (int i = 1; i < initialPoints.size() && newPoints.size() < totalPoints; ++i) {
             double currentLength = initialPoints.get(i - 1).distance(initialPoints.get(i));
+            if (currentLength <= 1e-6) {
+                continue;
+            }
             if (length + currentLength >= interval) {
                 Point newPoint = new Point(
                     initialPoints.get(i - 1).x + ((interval - length) / currentLength) * (initialPoints.get(i).x - initialPoints.get(i - 1).x),
@@ -376,7 +395,12 @@ public class ShapeDetector {
 
     private void scale(ArrayList<Point> points, double size) {
         RectD boundingBox = boundingBox(points);
+        if (boundingBox == null) {
+            return;
+        }
         double width = boundingBox.right - boundingBox.left, height = boundingBox.bottom - boundingBox.top;
+        if (width <= 1e-6) width = 1.0;
+        if (height <= 1e-6) height = 1.0;
         for (int i = 0; i < points.size(); ++i) {
             Point point = points.get(i);
             point.x *= size / width;

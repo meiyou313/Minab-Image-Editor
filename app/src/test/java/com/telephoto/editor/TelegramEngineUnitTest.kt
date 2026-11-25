@@ -12,6 +12,7 @@ import org.telegram.ui.Components.Crop.CropTransform
 import org.telegram.ui.Components.FilterShaders
 import org.telegram.ui.Components.Paint.Brush
 import org.telegram.ui.Components.Paint.PersistColorPalette
+import org.telegram.ui.Components.Paint.Shader
 import org.telegram.ui.Components.Paint.UndoStore
 import org.telegram.ui.Components.PhotoFilterView
 import java.nio.ByteBuffer
@@ -182,5 +183,50 @@ class TelegramEngineUnitTest {
         palette.fillShapes = true
         assertTrue(palette.fillShapes)
         palette.fillShapes = false
+    }
+
+    @Test
+    fun updateChecker_comparesSemanticVersionsCorrectly() {
+        assertTrue(UpdateChecker.isNewerVersion("v1.2.1", "1.2.0"))
+        assertTrue(UpdateChecker.isNewerVersion("1.3.0", "1.2.9"))
+        assertTrue(UpdateChecker.isNewerVersion("v2.0.0", "1.9.9"))
+        assertFalse(UpdateChecker.isNewerVersion("v1.2.0", "1.2.0"))
+        assertFalse(UpdateChecker.isNewerVersion("v1.1.9", "1.2.0"))
+        assertFalse(UpdateChecker.isNewerVersion("v1.1.1", "1.2.0"))
+        assertEquals(listOf(1, 2, 0), UpdateChecker.parseSemVer("v1.2.0-beta1"))
+    }
+
+    @Test
+    fun crashLogManager_formatsReadableCopyableReportAndBreadcrumbs() {
+        CrashLogManager.addBreadcrumb("Opened Paint mode")
+        CrashLogManager.addBreadcrumb("Selected brush: Arrow")
+        val crumbs = CrashLogManager.getRecentBreadcrumbs()
+        assertTrue(crumbs.any { it.contains("Opened Paint mode") })
+        assertTrue(crumbs.any { it.contains("Selected brush: Arrow") })
+
+        val sample = CrashLogManager.DebugEntry(
+            id = "abc12345",
+            timestampMs = 1700000000000L,
+            timestampText = "2026-11-25 14:00:00",
+            level = CrashLogManager.LEVEL_CRASH,
+            threadName = "CanvasInternal",
+            tag = "UncaughtException",
+            title = "NullPointerException: sample",
+            stackTrace = "java.lang.NullPointerException: sample\n\tat org.telegram.Test.run(Test.java:1)",
+            breadcrumbs = listOf("[14:00:00.000] Selected brush: Arrow"),
+            appVersion = "v1.2.0 (5)",
+            deviceSummary = "TestPhone"
+        )
+        val formatted = CrashLogManager.formatEntryForCopy(sample)
+        assertTrue(formatted.contains("[CRASH] NullPointerException: sample"))
+        assertTrue(formatted.contains("CanvasInternal"))
+        assertTrue(formatted.contains("Selected brush: Arrow"))
+    }
+
+    @Test
+    fun paintShader_missingUniformReturnsMinusOneInsteadOfNpe() {
+        val shader = Shader("", "", arrayOf("inPosition"), arrayOf("mvpMatrix"))
+        assertEquals(-1, shader.getUniform("mvpMatrix"))
+        assertEquals(-1, shader.getUniform("unknownUniform"))
     }
 }

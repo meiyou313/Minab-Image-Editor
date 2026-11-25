@@ -274,7 +274,7 @@ public class PaintWeightChooserView extends View {
             false
         );
 
-        if (drawCenter && showProgress != 0f && showPreview && renderView != null) {
+        if (drawCenter && showProgress != 0f && showPreview && renderView != null && renderView.getCurrentBrush() != null) {
             float cx = getWidth() / 2f, cy = getHeight() / 2f, rad = renderView.brushWeightForSize(weight) * renderView.getCurrentBrush().getScale() * renderView.getCurrentBrush().getPreviewScale();
             drawCircleWithShadow(canvas, cx, cy, rad, true);
         }

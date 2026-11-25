@@ -172,7 +172,7 @@ public class Input {
     private Brush switchedBrushByStylusFrom;
 
     public void process(MotionEvent event, float scale) {
-        if (fillAnimator != null || arrowAnimator != null) {
+        if (fillAnimator != null || arrowAnimator != null || invertMatrix == null || renderView == null || renderView.getCurrentBrush() == null) {
             return;
         }
         int action = event.getActionMasked();
@@ -244,6 +244,9 @@ public class Input {
                         }
                     }
 
+                    if (pointsCount >= points.length) {
+                        pointsCount = points.length - 1;
+                    }
                     points[pointsCount] = location;
                     if (renderView.getPainting() == null || !renderView.getPainting().masking) {
                         if ((System.currentTimeMillis() - drawingStart) > 3000) {
@@ -297,12 +300,13 @@ public class Input {
                         }
                         reset();
                     } else if (pointsCount > 0) {
+                        final Point savedLastLoc = points[Math.min(pointsCount - 1, points.length - 1)];
                         smoothenAndPaintPoints(true, renderView.getCurrentBrush().getSmoothThicknessRate());
 
                         Brush brush = renderView.getCurrentBrush();
                         if (brush instanceof Brush.Arrow) {
                             float angle = lastAngle;
-                            final Point loc = points[pointsCount - 1];
+                            final Point loc = savedLastLoc != null ? savedLastLoc : location;
                             double z = lastThickLocation == null ? location.z : lastThickLocation.z;
                             float arrowLength = renderView.getCurrentWeight() * (float) z * 12f;
 

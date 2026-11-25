@@ -1,6 +1,8 @@
 package com.telephoto.editor
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -19,19 +21,22 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.telegram.messenger.AndroidUtilities
+import org.telegram.messenger.BuildConfig
 import org.telegram.messenger.R
 import java.util.ArrayDeque
 import java.util.concurrent.Executors
 
 /**
- * Telegram-identical Photo Editor shell (frames 00:03 - 00:14, 00:35, 01:41):
- * - Top bar: `←` Back + Title + Undo/Reset when modified
+ * Telegram-identical Photo Editor shell:
+ * - Landing screen with photo picker, in-app update banner, manual Check Update button,
+ *   crash recovery notice, and Ladybug Debug Console button.
+ * - Editor shell: Top bar (`←` + Title + Undo/Reset + Update + Ladybug Debug)
  * - Full-bleed pure-black photo canvas
  * - Bottom bar: Floating dark rounded pill with [Crop | Draw/Paint | Adjust] icons + Telegram blue circular Save button
- *   (No "Add a caption..." or "SD" messaging buttons per user's instruction)
  */
 class MainActivity : AppCompatActivity() {
 
@@ -42,13 +47,25 @@ class MainActivity : AppCompatActivity() {
     private val historyStack = ArrayDeque<Bitmap>()
 
     private lateinit var rootContainer: FrameLayout
-    private lateinit var landingView: LinearLayout
+    private lateinit var landingView: FrameLayout
     private lateinit var editorShell: LinearLayout
     private lateinit var previewImageView: ImageView
     private lateinit var undoIconBtn: ImageView
     private lateinit var resetTextBtn: TextView
     private lateinit var saveCircleBtn: ImageView
     private lateinit var activePanelContainer: FrameLayout
+
+    // Update & Debug UI references
+    private lateinit var landingUpdateBanner: LinearLayout
+    private lateinit var landingUpdateBannerText: TextView
+    private lateinit var landingCrashBanner: LinearLayout
+    private lateinit var manualUpdateBtn: TextView
+    private lateinit var landingDebugDot: View
+    private lateinit var editorDebugDot: View
+    private lateinit var editorUpdateDot: View
+
+    private var availableRelease: UpdateChecker.ReleaseInfo? = null
+    private var checkingUpdate = false
 
     private var activeFilterPanel: TelegramFilterPanel? = null
     private var activePaintPanel: TelegramPaintPanel? = null
@@ -63,6 +80,14 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri != null) loadImageFromUri(uri)
+    }
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            availableRelease?.let { UpdateChecker.maybeShowUpdateNotification(this, it, force = false) }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,12 +137,20 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
+        requestNotificationPermissionIfNeeded()
+        refreshDebugBadges()
         handleIncomingIntent(intent)
+        runSilentUpdateCheck()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIncomingIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshDebugBadges()
     }
 
     override fun onDestroy() {
@@ -126,8 +159,39 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
     private fun handleIncomingIntent(intent: Intent?) {
         if (intent == null) return
+        if (intent.getBooleanExtra(UpdateChecker.EXTRA_OPEN_UPDATE_DIALOG, false)) {
+            val tag = intent.getStringExtra(UpdateChecker.EXTRA_RELEASE_TAG)
+            if (!tag.isNullOrBlank()) {
+                val release = UpdateChecker.ReleaseInfo(
+                    tagName = tag,
+                    versionName = tag.removePrefix("v").removePrefix("V"),
+                    title = intent.getStringExtra(UpdateChecker.EXTRA_RELEASE_TITLE) ?: "TelePhoto Editor $tag",
+                    notes = intent.getStringExtra(UpdateChecker.EXTRA_RELEASE_NOTES) ?: "",
+                    apkDownloadUrl = intent.getStringExtra(UpdateChecker.EXTRA_RELEASE_APK_URL),
+                    releasePageUrl = intent.getStringExtra(UpdateChecker.EXTRA_RELEASE_PAGE_URL)
+                        ?: UpdateChecker.RELEASES_PAGE_URL,
+                    publishedAt = ""
+                )
+                availableRelease = release
+                applyUpdateAvailableUi(release)
+                UpdateDialogHelper.showUpdateDialog(this, release)
+            }
+        }
+
         val uri: Uri? = when (intent.action) {
             Intent.ACTION_EDIT -> intent.data
             Intent.ACTION_SEND -> {
@@ -146,11 +210,143 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildLandingView() {
-        landingView = LinearLayout(this).apply {
+        landingView = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+        }
+
+        // Top utility bar (Version badge on left | Check Update + Ladybug Debug on right)
+        val topUtilBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(12f), AndroidUtilities.dp(14f), AndroidUtilities.dp(8f))
+        }
+
+        val versionPill = TextView(this).apply {
+            text = "v${BuildConfig.VERSION_NAME}"
+            setTextColor(0xFF9E9E9E.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            typeface = AndroidUtilities.bold()
+            setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(5f), AndroidUtilities.dp(10f), AndroidUtilities.dp(5f))
+            background = GradientDrawable().apply {
+                setColor(0xFF1C1C1E.toInt())
+                cornerRadius = AndroidUtilities.dp(12f).toFloat()
+            }
+        }
+
+        manualUpdateBtn = TextView(this).apply {
+            text = "بررسی آپدیت"
+            setTextColor(0xFF64D2FF.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            typeface = AndroidUtilities.bold()
+            gravity = Gravity.CENTER
+            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(7f), AndroidUtilities.dp(12f), AndroidUtilities.dp(7f))
+            background = GradientDrawable().apply {
+                setColor(0xFF1C1C1E.toInt())
+                cornerRadius = AndroidUtilities.dp(14f).toFloat()
+                setStroke(AndroidUtilities.dp(1f), 0x442AABEE)
+            }
+            setOnClickListener { runManualUpdateCheck() }
+        }
+
+        val (debugBtnFrame, debugDot) = makeLadybugButton()
+        landingDebugDot = debugDot
+
+        topUtilBar.addView(versionPill)
+        topUtilBar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        topUtilBar.addView(
+            manualUpdateBtn,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                marginEnd = AndroidUtilities.dp(8f)
+            }
+        )
+        topUtilBar.addView(debugBtnFrame, LinearLayout.LayoutParams(AndroidUtilities.dp(42f), AndroidUtilities.dp(42f)))
+
+        landingView.addView(
+            topUtilBar,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP
+            )
+        )
+
+        // Center content column
+        val centerCol = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(AndroidUtilities.dp(32f), AndroidUtilities.dp(32f), AndroidUtilities.dp(32f), AndroidUtilities.dp(32f))
+            setPadding(AndroidUtilities.dp(28f), AndroidUtilities.dp(68f), AndroidUtilities.dp(28f), AndroidUtilities.dp(32f))
         }
+
+        // In-app Update Notification Banner (visible whenever a new GitHub Release exists)
+        landingUpdateBanner = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            setPadding(AndroidUtilities.dp(14f), AndroidUtilities.dp(11f), AndroidUtilities.dp(14f), AndroidUtilities.dp(11f))
+            background = GradientDrawable().apply {
+                setColor(0xFF132635.toInt())
+                cornerRadius = AndroidUtilities.dp(16f).toFloat()
+                setStroke(AndroidUtilities.dp(1f), 0xFF2AABEE.toInt())
+            }
+            setOnClickListener {
+                availableRelease?.let { UpdateDialogHelper.showUpdateDialog(this@MainActivity, it) }
+            }
+        }
+        val bannerIcon = ImageView(this).apply {
+            setImageResource(R.drawable.ic_tg_update)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+        }
+        landingUpdateBannerText = TextView(this).apply {
+            text = "نسخه جدید در دسترس است!"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = AndroidUtilities.bold()
+            setPadding(AndroidUtilities.dp(10f), 0, AndroidUtilities.dp(8f), 0)
+        }
+        val bannerAction = TextView(this).apply {
+            text = "مشاهده"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = AndroidUtilities.bold()
+            setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(5f), AndroidUtilities.dp(10f), AndroidUtilities.dp(5f))
+            background = GradientDrawable().apply {
+                setColor(0xFF2AABEE.toInt())
+                cornerRadius = AndroidUtilities.dp(10f).toFloat()
+            }
+        }
+        landingUpdateBanner.addView(bannerIcon, LinearLayout.LayoutParams(AndroidUtilities.dp(22f), AndroidUtilities.dp(22f)))
+        landingUpdateBanner.addView(landingUpdateBannerText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        landingUpdateBanner.addView(bannerAction)
+
+        // Crash Recovery Banner (shown only after an unexpected crash)
+        landingCrashBanner = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            setPadding(AndroidUtilities.dp(14f), AndroidUtilities.dp(10f), AndroidUtilities.dp(14f), AndroidUtilities.dp(10f))
+            background = GradientDrawable().apply {
+                setColor(0xFF2C1618.toInt())
+                cornerRadius = AndroidUtilities.dp(16f).toFloat()
+                setStroke(AndroidUtilities.dp(1f), 0x88FF453A.toInt())
+            }
+            setOnClickListener { openDebugConsole() }
+        }
+        val crashIcon = ImageView(this).apply {
+            setImageResource(R.drawable.ic_debug_ladybug)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+        }
+        val crashText = TextView(this).apply {
+            text = "گزارش کرش قبلی ذخیره شد — برای مشاهده و کپی لمس کنید"
+            setTextColor(0xFFFFD5D2.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            typeface = AndroidUtilities.bold()
+            setPadding(AndroidUtilities.dp(10f), 0, 0, 0)
+        }
+        landingCrashBanner.addView(crashIcon, LinearLayout.LayoutParams(AndroidUtilities.dp(24f), AndroidUtilities.dp(24f)))
+        landingCrashBanner.addView(crashText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
         val title = TextView(this).apply {
             text = getString(R.string.app_name)
@@ -182,9 +378,35 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { launchPhotoPicker() }
         }
 
-        landingView.addView(title)
-        landingView.addView(subtitle)
-        landingView.addView(pickBtn)
+        centerCol.addView(
+            landingUpdateBanner,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = AndroidUtilities.dp(12f)
+            }
+        )
+        centerCol.addView(
+            landingCrashBanner,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = AndroidUtilities.dp(20f)
+            }
+        )
+        centerCol.addView(title)
+        centerCol.addView(subtitle)
+        centerCol.addView(pickBtn)
+
+        landingView.addView(
+            centerCol,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
 
         rootContainer.addView(
             landingView,
@@ -202,12 +424,12 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
 
-        // === TOP BAR (Exact Telegram PhotoViewer bar: `←` + Title + Undo/Reset) ===
+        // === TOP BAR (`←` + Title + Undo + Reset + Update + Ladybug Debug) ===
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(Color.BLACK)
-            setPadding(AndroidUtilities.dp(8f), AndroidUtilities.dp(4f), AndroidUtilities.dp(14f), AndroidUtilities.dp(4f))
+            setPadding(AndroidUtilities.dp(6f), AndroidUtilities.dp(4f), AndroidUtilities.dp(8f), AndroidUtilities.dp(4f))
         }
 
         val backBtn = ImageView(this).apply {
@@ -220,15 +442,15 @@ class MainActivity : AppCompatActivity() {
         val titleView = TextView(this).apply {
             text = getString(R.string.app_name)
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17.5f)
             typeface = AndroidUtilities.bold()
-            setPadding(AndroidUtilities.dp(10f), 0, 0, 0)
+            setPadding(AndroidUtilities.dp(6f), 0, 0, 0)
         }
 
         undoIconBtn = ImageView(this).apply {
             setImageResource(R.drawable.ic_tg_undo)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f))
+            setPadding(AndroidUtilities.dp(9f), AndroidUtilities.dp(9f), AndroidUtilities.dp(9f), AndroidUtilities.dp(9f))
             visibility = View.GONE
             setOnClickListener { performGlobalUndo() }
         }
@@ -236,18 +458,33 @@ class MainActivity : AppCompatActivity() {
         resetTextBtn = TextView(this).apply {
             text = getString(R.string.action_reset)
             setTextColor(0xFF4DA3FF.toInt())
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
             typeface = AndroidUtilities.bold()
             gravity = Gravity.CENTER
-            setPadding(AndroidUtilities.dp(8f), 0, AndroidUtilities.dp(4f), 0)
+            setPadding(AndroidUtilities.dp(6f), 0, AndroidUtilities.dp(4f), 0)
             visibility = View.GONE
             setOnClickListener { resetToOriginal() }
         }
 
-        topBar.addView(backBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(46f), AndroidUtilities.dp(46f)))
+        val (updateBtnFrame, updDot) = makeIconWithBadge(R.drawable.ic_tg_update, 0xFF2AABEE.toInt()) {
+            val rel = availableRelease
+            if (rel != null) {
+                UpdateDialogHelper.showUpdateDialog(this, rel)
+            } else {
+                runManualUpdateCheck()
+            }
+        }
+        editorUpdateDot = updDot
+
+        val (debugBtnFrame, dbgDot) = makeLadybugButton()
+        editorDebugDot = dbgDot
+
+        topBar.addView(backBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(42f), AndroidUtilities.dp(44f)))
         topBar.addView(titleView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        topBar.addView(undoIconBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(44f), AndroidUtilities.dp(44f)))
-        topBar.addView(resetTextBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, AndroidUtilities.dp(44f)))
+        topBar.addView(undoIconBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(40f), AndroidUtilities.dp(42f)))
+        topBar.addView(resetTextBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, AndroidUtilities.dp(42f)))
+        topBar.addView(updateBtnFrame, LinearLayout.LayoutParams(AndroidUtilities.dp(40f), AndroidUtilities.dp(42f)))
+        topBar.addView(debugBtnFrame, LinearLayout.LayoutParams(AndroidUtilities.dp(40f), AndroidUtilities.dp(42f)))
         editorShell.addView(topBar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, AndroidUtilities.dp(54f)))
 
         // === FULL-BLEED IMAGE PREVIEW ===
@@ -260,7 +497,7 @@ class MainActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         )
 
-        // === BOTTOM FLOATING PILL + BLUE CIRCLE SAVE BUTTON (frame 00:05) ===
+        // === BOTTOM FLOATING PILL + BLUE CIRCLE SAVE BUTTON ===
         val bottomRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -318,6 +555,119 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    private fun makeLadybugButton(): Pair<FrameLayout, View> {
+        return makeIconWithBadge(R.drawable.ic_debug_ladybug, 0xFFFF3B30.toInt()) {
+            openDebugConsole()
+        }
+    }
+
+    private fun makeIconWithBadge(
+        iconRes: Int,
+        badgeColor: Int,
+        onClick: () -> Unit
+    ): Pair<FrameLayout, View> {
+        val frame = FrameLayout(this).apply {
+            setOnClickListener { onClick() }
+        }
+        val icon = ImageView(this).apply {
+            setImageResource(iconRes)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(AndroidUtilities.dp(8f), AndroidUtilities.dp(8f), AndroidUtilities.dp(8f), AndroidUtilities.dp(8f))
+        }
+        val dot = View(this).apply {
+            visibility = View.GONE
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(badgeColor)
+                setStroke(AndroidUtilities.dp(1.2f), Color.BLACK)
+            }
+        }
+        frame.addView(icon, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        frame.addView(
+            dot,
+            FrameLayout.LayoutParams(AndroidUtilities.dp(9f), AndroidUtilities.dp(9f), Gravity.TOP or Gravity.END).apply {
+                topMargin = AndroidUtilities.dp(6f)
+                rightMargin = AndroidUtilities.dp(6f)
+            }
+        )
+        return frame to dot
+    }
+
+    private fun openDebugConsole() {
+        DebugConsoleDialog.show(this) {
+            refreshDebugBadges()
+        }
+    }
+
+    private fun refreshDebugBadges() {
+        val hasCrash = CrashLogManager.hasUnreadCrash()
+        val dotVis = if (hasCrash) View.VISIBLE else View.GONE
+        landingDebugDot.visibility = dotVis
+        editorDebugDot.visibility = dotVis
+        landingCrashBanner.visibility = dotVis
+    }
+
+    private fun runSilentUpdateCheck() {
+        UpdateChecker.checkForUpdateAsync(
+            context = this,
+            postSystemNotification = true,
+            forceNotificationRepeat = false
+        ) { result ->
+            if (isFinishing || isDestroyed) return@checkForUpdateAsync
+            if (result is UpdateChecker.CheckResult.UpdateAvailable) {
+                availableRelease = result.release
+                applyUpdateAvailableUi(result.release)
+            }
+        }
+    }
+
+    private fun runManualUpdateCheck() {
+        if (checkingUpdate) return
+        checkingUpdate = true
+        manualUpdateBtn.text = "در حال بررسی..."
+        manualUpdateBtn.alpha = 0.7f
+        Toast.makeText(this, "در حال بررسی آخرین نسخه از GitHub...", Toast.LENGTH_SHORT).show()
+
+        UpdateChecker.checkForUpdateAsync(
+            context = this,
+            postSystemNotification = true,
+            forceNotificationRepeat = true
+        ) { result ->
+            checkingUpdate = false
+            manualUpdateBtn.text = "بررسی آپدیت"
+            manualUpdateBtn.alpha = 1f
+            if (isFinishing || isDestroyed) return@checkForUpdateAsync
+
+            when (result) {
+                is UpdateChecker.CheckResult.UpdateAvailable -> {
+                    availableRelease = result.release
+                    applyUpdateAvailableUi(result.release)
+                    UpdateDialogHelper.showUpdateDialog(this, result.release)
+                }
+                is UpdateChecker.CheckResult.UpToDate -> {
+                    Toast.makeText(
+                        this,
+                        "شما آخرین نسخه (v${result.currentVersion}) را دارید ✓",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                is UpdateChecker.CheckResult.Error -> {
+                    Toast.makeText(
+                        this,
+                        "خطا در بررسی آپدیت: ${result.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun applyUpdateAvailableUi(release: UpdateChecker.ReleaseInfo) {
+        landingUpdateBannerText.text = "نسخه جدید ${release.tagName} منتشر شد!"
+        landingUpdateBanner.visibility = View.VISIBLE
+        editorUpdateDot.visibility = View.VISIBLE
+    }
+
     private fun makePillIcon(iconRes: Int, onClick: () -> Unit): ImageView {
         return ImageView(this).apply {
             setImageResource(iconRes)
@@ -338,6 +688,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadImageFromUri(uri: Uri) {
+        CrashLogManager.addBreadcrumb("Loading image URI")
         ioExecutor.execute {
             val bmp = BitmapUtils.decodeSampledBitmap(this, uri)
             runOnUiThread {
@@ -345,6 +696,7 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, R.string.load_failed, Toast.LENGTH_SHORT).show()
                     return@runOnUiThread
                 }
+                CrashLogManager.addBreadcrumb("Loaded bitmap ${bmp.width}x${bmp.height} (${bmp.config})")
                 closeActivePanel()
                 clearHistory()
                 originalBitmap = bmp.copy(Bitmap.Config.ARGB_8888, false)
@@ -359,6 +711,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun openCropMode() {
         val bmp = currentBitmap ?: return
+        CrashLogManager.addBreadcrumb("Opened Crop mode")
         val panel = TelegramCropPanel(
             this,
             bmp,
@@ -373,6 +726,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun openAdjustMode() {
         val bmp = currentBitmap ?: return
+        CrashLogManager.addBreadcrumb("Opened Adjust/Filter mode")
         val panel = TelegramFilterPanel(
             this,
             bmp,
@@ -388,6 +742,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun openPaintMode() {
         val bmp = currentBitmap ?: return
+        CrashLogManager.addBreadcrumb("Opened Draw/Paint mode")
         val panel = TelegramPaintPanel(
             this,
             bmp,
@@ -420,6 +775,7 @@ class MainActivity : AppCompatActivity() {
         activePaintPanel = null
         activePanelContainer.removeAllViews()
         activePanelContainer.visibility = View.GONE
+        refreshDebugBadges()
     }
 
     private fun commitEditedBitmap(next: Bitmap) {
@@ -462,6 +818,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveCurrentImage() {
         val bmp = currentBitmap ?: return
+        CrashLogManager.addBreadcrumb("Saving image ${bmp.width}x${bmp.height}")
         saveCircleBtn.isEnabled = false
         saveCircleBtn.alpha = 0.6f
         ioExecutor.execute {

@@ -168,13 +168,17 @@ public class RenderView extends TextureView {
         if (event.getPointerCount() > 1) {
             return false;
         }
-        if (internal == null || !internal.initialized || !internal.ready) {
+        if (internal == null || !internal.initialized || !internal.ready || brush == null) {
             return true;
         }
-        if (brush instanceof Brush.Shape) {
-            shapeInput.process(event, getScaleX());
-        } else {
-            input.process(event, getScaleX());
+        try {
+            if (brush instanceof Brush.Shape) {
+                shapeInput.process(event, getScaleX());
+            } else {
+                input.process(event, getScaleX());
+            }
+        } catch (Throwable t) {
+            FileLog.e("RenderView.onTouch failed", t);
         }
         return true;
     }
@@ -299,11 +303,9 @@ public class RenderView extends TextureView {
         matrix.preScale(scale, -scale);
         matrix.preTranslate(-paintingSize.width / 2.0f, -paintingSize.height / 2.0f);
 
-        if (brush instanceof Brush.Shape) {
-            shapeInput.setMatrix(matrix);
-        } else {
-            input.setMatrix(matrix);
-        }
+        // Always keep BOTH input matrices in sync so switching between brushes & shapes never has a null invertMatrix
+        shapeInput.setMatrix(matrix);
+        input.setMatrix(matrix);
 
         float[] proj = GLMatrix.LoadOrtho(0.0f, internal.bufferWidth, 0.0f, internal.bufferHeight, -1.0f, 1.0f);
         float[] effectiveProjection = GLMatrix.LoadGraphicsMatrix(matrix);
@@ -540,7 +542,11 @@ public class RenderView extends TextureView {
                 egl10.eglSwapBuffers(eglDisplay, eglSurface);
                 if (!firstDrawSent) {
                     firstDrawSent = true;
-                    AndroidUtilities.runOnUIThread(() -> delegate.onFirstDraw());
+                    AndroidUtilities.runOnUIThread(() -> {
+                        if (delegate != null) {
+                            delegate.onFirstDraw();
+                        }
+                    });
                 }
 
                 if (!ready) {
@@ -656,8 +662,12 @@ public class RenderView extends TextureView {
                 return;
             }
 
-            internal.setCurrentContext();
-            action.run();
+            try {
+                internal.setCurrentContext();
+                action.run();
+            } catch (Throwable t) {
+                FileLog.e("RenderView.performInContext failed", t);
+            }
         });
     }
 

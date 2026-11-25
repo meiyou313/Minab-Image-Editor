@@ -44,12 +44,31 @@ public class Slice {
     }
 
     private void storeData(ByteBuffer data) {
+        if (data == null || file == null) {
+            return;
+        }
         try {
-            final byte[] input = data.array();
+            final byte[] input;
+            final int offset;
+            final int length;
+            if (data.hasArray()) {
+                input = data.array();
+                offset = data.arrayOffset() + data.position();
+                length = data.remaining();
+            } else {
+                ByteBuffer dup = data.duplicate();
+                length = dup.remaining();
+                input = new byte[length];
+                dup.get(input);
+                offset = 0;
+            }
+            if (length <= 0) {
+                return;
+            }
             FileOutputStream fos = new FileOutputStream(file);
 
             final Deflater deflater = new Deflater(Deflater.BEST_SPEED, true);
-            deflater.setInput(input, data.arrayOffset(), data.remaining());
+            deflater.setInput(input, offset, length);
             deflater.finish();
 
             byte[] buf = new byte[1024];
@@ -66,6 +85,9 @@ public class Slice {
     }
 
     public ByteBuffer getData() {
+        if (file == null || !file.exists() || file.length() == 0) {
+            return null;
+        }
         try {
             byte[] input = new byte[1024];
             byte[] output = new byte[1024];
@@ -87,7 +109,12 @@ public class Slice {
                 if (inflater.finished()) {
                     break;
                 } else if (inflater.needsInput()) {
+                    if (numRead == -1) {
+                        break;
+                    }
                     continue;
+                } else {
+                    break;
                 }
             }
 

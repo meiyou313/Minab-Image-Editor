@@ -2,6 +2,8 @@ package org.telegram.messenger;
 
 import android.util.Log;
 
+import com.telephoto.editor.CrashLogManager;
+
 public class FileLog {
     private static final String TAG = "TelePhotoEditor";
 
@@ -14,12 +16,14 @@ public class FileLog {
     public static void e(String message) {
         if (message != null) {
             Log.e(TAG, message);
+            CrashLogManager.recordError(TAG, message, null);
         }
     }
 
     public static void e(Throwable e) {
         if (e != null) {
             Log.e(TAG, Log.getStackTraceString(e));
+            CrashLogManager.recordError(TAG, null, e);
         }
     }
 
@@ -29,5 +33,6 @@ public class FileLog {
 
     public static void e(String message, Throwable e) {
         Log.e(TAG, message, e);
+        CrashLogManager.recordError(TAG, message, e);
     }
 }

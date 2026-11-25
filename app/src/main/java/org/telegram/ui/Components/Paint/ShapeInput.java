@@ -85,6 +85,9 @@ public class ShapeInput {
     private float distToLine(float x, float y, float l1x, float l1y, float l2x, float l2y) {
         float px = l2x-l1x, py = l2y-l1y;
         float norm = px * px + py * py;
+        if (norm <= 1e-6f) {
+            return (float) Math.hypot(x - l1x, y - l1y);
+        }
         float u = Math.max(Math.min(((x - l1x) * px + (y - l1y) * py) / norm, 1), 0);
         float dx = (l1x + u * px) - x, dy = (l1y + u * py) - y;
         return (float) Math.sqrt(dx*dx + dy*dy);
@@ -152,7 +155,7 @@ public class ShapeInput {
 
     private float[] tempPoint = new float[2];
     public void process(MotionEvent event, float scale) {
-        if (renderView == null || renderView.getPainting() == null || shape == null) {
+        if (renderView == null || renderView.getPainting() == null || shape == null || invertMatrix == null) {
             return;
         }
 

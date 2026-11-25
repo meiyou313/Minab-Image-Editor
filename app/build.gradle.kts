@@ -11,8 +11,8 @@ android {
         applicationId = "com.telephoto.editor"
         minSdk = 24
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.1.1"
+        versionCode = 5
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -26,9 +26,27 @@ android {
         }
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
+    signingConfigs {
+        create("telephotoDebug") {
+            storeFile = file("telephoto_debug.p12")
+            storeType = "PKCS12"
+            storePassword = "telephoto_debug_key"
+            keyAlias = "telephotokey"
+            keyPassword = "telephoto_debug_key"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("telephotoDebug")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("telephotoDebug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

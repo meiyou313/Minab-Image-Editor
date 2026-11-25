@@ -13,8 +13,10 @@ import android.opengl.GLES20;
 
 import androidx.core.graphics.ColorUtils;
 
+import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.BotWebViewVibrationEffect;
 import org.telegram.messenger.DispatchQueue;
+import org.telegram.messenger.FileLog;
 import org.telegram.messenger.Utilities;
 import org.telegram.ui.Components.BlurringShader;
 import org.telegram.ui.Components.CubicBezierInterpolator;
@@ -195,33 +197,36 @@ public class Painting {
 
             if (helperShown != (shape != null)) {
                 helperShown = shape != null;
-                if (helperAnimator != null) {
-                    helperAnimator.cancel();
-                    helperAnimator = null;
-                }
-
-                helperAnimator = ValueAnimator.ofFloat(helperAlpha, helperShown ? 1f : 0f);
-                helperAnimator.addUpdateListener(anm -> {
-                    renderView.performInContext(() -> {
-                        helperAlpha = (float) anm.getAnimatedValue();
-                        if (delegate != null) {
-                            delegate.contentChanged();
-                        }
-                    });
-                });
-                helperAnimator.addListener(new AnimatorListenerAdapter() {
-                    @Override
-                    public void onAnimationEnd(Animator animation) {
+                final boolean shownNow = helperShown;
+                final float startAlpha = helperAlpha;
+                AndroidUtilities.runOnUIThread(() -> {
+                    if (helperAnimator != null) {
+                        helperAnimator.cancel();
                         helperAnimator = null;
+                    }
+                    helperAnimator = ValueAnimator.ofFloat(startAlpha, shownNow ? 1f : 0f);
+                    helperAnimator.addUpdateListener(anm -> {
                         renderView.performInContext(() -> {
+                            helperAlpha = (float) anm.getAnimatedValue();
                             if (delegate != null) {
                                 delegate.contentChanged();
                             }
                         });
-                    }
+                    });
+                    helperAnimator.addListener(new AnimatorListenerAdapter() {
+                        @Override
+                        public void onAnimationEnd(Animator animation) {
+                            helperAnimator = null;
+                            renderView.performInContext(() -> {
+                                if (delegate != null) {
+                                    delegate.contentChanged();
+                                }
+                            });
+                        }
+                    });
+                    helperAnimator.setInterpolator(CubicBezierInterpolator.EASE_OUT_QUINT);
+                    helperAnimator.start();
                 });
-                helperAnimator.setInterpolator(CubicBezierInterpolator.EASE_OUT_QUINT);
-                helperAnimator.start();
 
                 helperShape = shape;
                 if (delegate != null) {
@@ -268,7 +273,7 @@ public class Painting {
 
                     int color = renderView.getCurrentColor();
                     paintStrokeInternal(activePath, false, false);
-                    Slice pathSlice = commitPathInternal(activePath, color, new RectF(activeStrokeBounds));
+                    Slice pathSlice = commitPathInternal(activePath, color, activeStrokeBounds != null ? new RectF(activeStrokeBounds) : null);
                     clearStrokeInternal();
 
                     Shape shape = helperShape;
@@ -355,15 +360,23 @@ public class Painting {
             }
 
             Brush brush = path.getBrush();
+            if (brush == null) {
+                return;
+            }
             Shader shader = shaders.get(brush.getShaderName(Brush.PAINT_TYPE_BRUSH));
-            if (shader == null) {
+            if (shader == null || shader.program == 0) {
                 return;
             }
 
             GLES20.glUseProgram(shader.program);
             Texture brushTexture = brushTextures.get(brush.getStampResId());
             if (brushTexture == null) {
-                brushTexture = new Texture(brush.getStamp());
+                Bitmap stamp = brush.getStamp();
+                if (stamp == null) {
+                    FileLog.e("Brush stamp bitmap null for resId=" + brush.getStampResId());
+                    return;
+                }
+                brushTexture = new Texture(stamp);
                 brushTextures.put(brush.getStampResId(), brushTexture);
             }
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
@@ -372,7 +385,7 @@ public class Painting {
             GLES20.glUniform1i(shader.getUniform("texture"), 0);
 
             if (!clearAll) {
-                renderState.viewportScale = renderView.getScaleX();
+                renderState.viewportScale = Math.max(0.01f, renderView.getScaleX());
             } else {
                 renderState.viewportScale = 1f;
             }
@@ -385,10 +398,12 @@ public class Painting {
             delegate.contentChanged();
         }
 
-        if (activeStrokeBounds != null) {
-            activeStrokeBounds.union(bounds);
-        } else {
-            activeStrokeBounds = bounds;
+        if (bounds != null) {
+            if (activeStrokeBounds != null) {
+                activeStrokeBounds.union(bounds);
+            } else {
+                activeStrokeBounds = bounds;
+            }
         }
     }
 
@@ -573,7 +588,7 @@ public class Painting {
                 if (blurManager != null) {
                     lock = blurManager.getTextureLock();
                     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, blurManager.getTexture());
-                } else {
+                } else if (bluredTexture != null) {
                     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, bluredTexture.texture());
                 }
             }
@@ -661,33 +676,42 @@ public class Painting {
     }
 
     private Slice registerUndo(RectF rect, boolean blurTex) {
-        if (rect == null) {
+        if (rect == null || delegate == null) {
             return null;
         }
 
         boolean intersect = rect.setIntersect(rect, getBounds());
-        if (!intersect) {
+        if (!intersect || rect.width() < 1f || rect.height() < 1f) {
             return null;
         }
 
-        final Slice slice = new Slice(getPaintingData(rect, true, blurTex, false).data, blurTex ? 1 : 0, rect, delegate.requestDispatchQueue());
+        PaintingData paintingData = getPaintingData(rect, true, blurTex, false);
+        if (paintingData == null || paintingData.data == null) {
+            return null;
+        }
+        final Slice slice = new Slice(paintingData.data, blurTex ? 1 : 0, rect, delegate.requestDispatchQueue());
         delegate.requestUndoStore().registerUndo(UUID.randomUUID(), () -> restoreSlice(slice));
 
         return slice;
     }
 
     private Slice registerDoubleUndo(RectF rect, boolean hadBlur) {
-        if (rect == null) {
+        if (rect == null || delegate == null) {
             return null;
         }
 
         boolean intersect = rect.setIntersect(rect, getBounds());
-        if (!intersect) {
+        if (!intersect || rect.width() < 1f || rect.height() < 1f) {
             return null;
         }
 
-        final Slice slice1 = new Slice(getPaintingData(rect, true, false, false).data, 0, rect, delegate.requestDispatchQueue());
-        final Slice slice2 = new Slice(getPaintingData(rect, true, true, false).data, 1, rect, delegate.requestDispatchQueue());
+        PaintingData data1 = getPaintingData(rect, true, false, false);
+        PaintingData data2 = getPaintingData(rect, true, true, false);
+        if (data1 == null || data1.data == null || data2 == null || data2.data == null) {
+            return null;
+        }
+        final Slice slice1 = new Slice(data1.data, 0, rect, delegate.requestDispatchQueue());
+        final Slice slice2 = new Slice(data2.data, 1, rect, delegate.requestDispatchQueue());
         delegate.requestUndoStore().registerUndo(UUID.randomUUID(), () -> {
             restoreSlice(slice1);
             restoreSlice(slice2);
@@ -709,6 +733,12 @@ public class Painting {
         }
 
         ByteBuffer buffer = slice.getData();
+        if (buffer == null) {
+            if (forget) {
+                slice.cleanResources();
+            }
+            return;
+        }
 
         int tex = getTexture();
         if (slice.getTexture() == 1 && bitmapBlurTexture != null) {
@@ -730,7 +760,7 @@ public class Painting {
     }
 
     public void render() {
-        if (shaders == null) {
+        if (shaders == null || renderProjection == null) {
             return;
         }
 
@@ -821,7 +851,7 @@ public class Painting {
         GLES20.glUniform1i(shader.getUniform("texture"), 0);
         GLES20.glUniform1i(shader.getUniform("mask"), 1);
         int color = renderView.getCurrentColor();
-        color = ColorUtils.setAlphaComponent(color, (int) (Color.alpha(color) * alpha));
+        color = ColorUtils.setAlphaComponent(color, Utilities.clamp((int) (Color.alpha(color) * alpha), 255, 0));
         Shader.SetColorUniform(shader.getUniform("color"), color);
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
@@ -878,7 +908,7 @@ public class Painting {
         GLES20.glUniform1i(shader.getUniform("texture"), 0);
         GLES20.glUniform1i(shader.getUniform("mask"), 1);
         int color = path.getColor();
-        color = ColorUtils.setAlphaComponent(color, (int) (Color.alpha(color) * brush.getOverrideAlpha() * alpha));
+        color = ColorUtils.setAlphaComponent(color, Utilities.clamp((int) (Color.alpha(color) * brush.getOverrideAlpha() * alpha), 255, 0));
         Shader.SetColorUniform(shader.getUniform("color"), color);
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
@@ -970,10 +1000,16 @@ public class Painting {
     }
 
     public PaintingData getPaintingData(RectF rect, boolean undo, boolean onlyBlur, boolean includeBlur) {
+        if (rect == null) {
+            return null;
+        }
         int minX = (int) rect.left;
         int minY = (int) rect.top;
         int width = (int) rect.width();
         int height = (int) rect.height();
+        if (width <= 0 || height <= 0) {
+            return null;
+        }
 
         GLES20.glGenFramebuffers(1, buffers, 0);
         int framebuffer = buffers[0];
@@ -1074,7 +1110,12 @@ public class Painting {
             }
         }
 
-        dataBuffer.limit(width * height * 4);
+        int neededBytes = width * height * 4;
+        if (dataBuffer == null || dataBuffer.capacity() < neededBytes) {
+            dataBuffer = ByteBuffer.allocateDirect(neededBytes);
+        }
+        dataBuffer.clear();
+        dataBuffer.limit(neededBytes);
         GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, dataBuffer);
 
         PaintingData data;
