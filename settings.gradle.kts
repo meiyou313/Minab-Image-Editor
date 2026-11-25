@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "TelePhoto-Editor"
+rootProject.name = "Minab-Image-Editor"
 include(":app")

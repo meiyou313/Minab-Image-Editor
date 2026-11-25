@@ -187,7 +187,7 @@ object CrashLogManager {
         reportTitle: String = "Selected Logs"
     ): String {
         val sb = StringBuilder()
-        sb.appendLine("TelePhoto Editor — Debug Diagnostic Report ($reportTitle)")
+        sb.appendLine("Minab Image Editor — Debug Diagnostic Report ($reportTitle)")
         sb.appendLine("Generated : ${formatTimestamp(System.currentTimeMillis())}")
         sb.appendLine("App       : v${safeVersionName()} (code ${safeVersionCode()})")
         sb.appendLine("Device    : ${buildDeviceSummary()}")
@@ -229,7 +229,7 @@ object CrashLogManager {
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.DISPLAY_NAME, fileName)
                     put(MediaStore.Downloads.MIME_TYPE, "text/plain")
-                    put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/TelePhotoEditor")
+                    put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/MinabImageEditor")
                     put(MediaStore.Downloads.IS_PENDING, 1)
                 }
                 val resolver = context.contentResolver
@@ -242,14 +242,14 @@ object CrashLogManager {
                     values.clear()
                     values.put(MediaStore.Downloads.IS_PENDING, 0)
                     resolver.update(uri, values, null, null)
-                    "Downloads/TelePhotoEditor/$fileName"
+                    "Downloads/MinabImageEditor/$fileName"
                 } catch (e: Throwable) {
                     resolver.delete(uri, null, null)
                     throw e
                 }
             } else {
                 val baseDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
-                val dir = File(baseDir, "TelePhotoEditor")
+                val dir = File(baseDir, "MinabImageEditor")
                 if (!dir.exists()) dir.mkdirs()
                 val file = File(dir, fileName)
                 file.writeText(content, Charsets.UTF_8)

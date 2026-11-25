@@ -652,6 +652,16 @@ public class RenderView extends TextureView {
         return internal != null ? internal.getTexture(blurTex, includeBlur) : null;
     }
 
+    public Bitmap getSnapshotBitmap() {
+        return internal != null ? internal.getTexture(false, true) : null;
+    }
+
+    public void replaceCanvasBitmap(Bitmap nextBitmap) {
+        if (painting != null) {
+            painting.replaceBitmapTexture(nextBitmap);
+        }
+    }
+
     public void performInContext(final Runnable action) {
         if (internal == null) {
             return;

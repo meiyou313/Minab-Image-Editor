@@ -231,17 +231,33 @@ class TelegramEngineUnitTest {
     }
 
     @Test
-    fun appLocale_has20LanguagesWithEnglishDefault() {
+    fun appLocale_has20LanguagesOrderedWithRtlAtBottom() {
         assertEquals(20, AppLocale.SUPPORTED_LANGUAGES.size)
         assertEquals("en", AppLocale.SUPPORTED_LANGUAGES.first().code)
         assertEquals("en", AppLocale.currentCode)
+        assertEquals("Minab Image Editor", AppLocale.t("app_name"))
         assertEquals("Pick Photo from Gallery", AppLocale.t("pick_photo"))
-        assertTrue(AppLocale.SUPPORTED_LANGUAGES.any { it.code == "fa" && it.isRtl })
-        assertTrue(AppLocale.SUPPORTED_LANGUAGES.any { it.code == "ar" && it.isRtl })
+
+        // Verify all RTL languages (ar, ur, fa) are placed strictly at the end of the list
+        val firstRtlIdx = AppLocale.SUPPORTED_LANGUAGES.indexOfFirst { it.isRtl }
+        assertEquals("RTL languages must begin at index 17 (last 3 entries)", 17, firstRtlIdx)
+        for (i in 0 until firstRtlIdx) {
+            assertFalse("Entry $i must be LTR", AppLocale.SUPPORTED_LANGUAGES[i].isRtl)
+        }
+        for (i in firstRtlIdx until AppLocale.SUPPORTED_LANGUAGES.size) {
+            assertTrue("Entry $i must be RTL", AppLocale.SUPPORTED_LANGUAGES[i].isRtl)
+        }
+        assertEquals(listOf("ar", "ur", "fa"), AppLocale.SUPPORTED_LANGUAGES.drop(firstRtlIdx).map { it.code })
     }
 
     @Test
-    fun savedFilterState_toneExtensionsAndCopyFromWorkAccurately() {
+    fun samsungFiltersAndNonDestructiveRecipe_scaleAndComposeAccurately() {
+        val expectedNames = listOf(
+            "Original", "Auto", "Warm", "Cool", "Light", "Frosty",
+            "Blossom", "Ivory", "Soft", "KissMe", "Grayscale", "B&W"
+        )
+        assertEquals(expectedNames, PresetManager.BUILT_IN_PRESETS.map { it.name })
+
         val src = MediaController.SavedFilterState().apply {
             brightnessValue = 50f
             tintValue = -40f
@@ -261,10 +277,20 @@ class TelegramEngineUnitTest {
         assertEquals(60f, dst.definitionValue, 0.001f)
         assertEquals(20f, dst.contrastValue, 0.001f)
 
-        val preset = PresetManager.BUILT_IN_PRESETS.first { it.id == "builtin_cinematic" }
-        preset.applyTo(dst)
-        assertEquals(26f, dst.contrastValue, 0.001f)
-        assertEquals(0f, dst.brightnessValue, 0.001f)
+        // Verify Samsung Warm filter at 50% strength combines cleanly with manual Contrast +20
+        val manualTone = MediaController.SavedFilterState().apply { contrastValue = 20f }
+        val recipe = EditLayerState.FilterRecipe(
+            selectedFilterId = "samsung_warm",
+            filterStrength = 50,
+            manualTone = manualTone
+        )
+        assertFalse(recipe.isEmpty())
+        val effective = recipe.computeEffectiveState(null)
+        assertEquals(22f, effective.warmthValue, 0.01f) // 44 * 0.5
+        assertEquals(25f, effective.contrastValue, 0.01f) // 20 manual + 10 * 0.5
+
+        // Verify UpdateChecker points to renamed Minab-Image-Editor repository
+        assertTrue(UpdateChecker.LATEST_RELEASE_API.contains("meiyou313/Minab-Image-Editor"))
     }
 
     @Test
@@ -273,9 +299,10 @@ class TelegramEngineUnitTest {
             id = "e1", timestampMs = 1L, timestampText = "2026-11-25 14:30:00",
             level = CrashLogManager.LEVEL_ERROR, threadName = "main", tag = "Filter",
             title = "Error One", stackTrace = "trace1", breadcrumbs = emptyList(),
-            appVersion = "v1.3.0 (6)", deviceSummary = "Test"
+            appVersion = "v1.4.0 (7)", deviceSummary = "Test"
         )
         val report = CrashLogManager.formatEntriesReport(null, listOf(e1), "Selected 1")
+        assertTrue(report.contains("Minab Image Editor"))
         assertTrue(report.contains("Selected 1"))
         assertTrue(report.contains("Error One"))
         assertTrue(report.contains("Entries   : 1"))

@@ -10,6 +10,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -30,31 +31,41 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.telegram.messenger.AndroidUtilities
 import org.telegram.messenger.BuildConfig
-import org.telegram.messenger.MediaController
 import org.telegram.messenger.R
 import java.io.File
 import java.util.ArrayDeque
 import java.util.concurrent.Executors
 
 /**
- * TelePhoto Editor Main Activity (v1.3.0):
- * - Dark / Light Theme + 20 World Languages (default English) + RTL support
- * - Fixed Back navigation (← and system Back return cleanly to the main menu)
- * - Pinch-to-Zoom + Hold-to-Compare preview
- * - Non-destructive Adjust/Tone session + Samsung-style Tone UI + Custom Presets
- * - Export & Share dialog (JPEG/PNG/WebP, quality, EXIF strip, FileProvider Share)
- * - Auto-Draft recovery + Recent Edits strip + Latest Photo shortcut
- * - 3-way Update Checker + Ladybug Debug Console with .txt exports
+ * Minab Image Editor Main Activity (v1.4.0):
+ * - Clean Landing Layout:
+ *   Top Bar: Left = App Logo + "Minab Image Editor" | Right = Minimalist Settings icon (contains Debug Console & 20 Languages)
+ *   Bottom Bar: Version pill | Check Update button | Dark/Light Mode toggle
+ * - Non-Destructive 3-Layer Editing Pipeline:
+ *   Layer 1: Cropped/Base Photo
+ *   Layer 2: Samsung Gallery Filters (with Strength 0..100) + Tone + Curves + Blur Recipe
+ *   Layer 3: Editable Paint Strokes/Arrows/Shapes (with cross-visit Undo history!) + Live Editable Text Entities
+ *   Layers remain independent & editable across tool switches until final Save/Share!
  */
 class MainActivity : AppCompatActivity() {
 
+    private data class EditorSnapshot(
+        val croppedBase: Bitmap,
+        val filteredPhoto: Bitmap,
+        val filterRecipe: EditLayerState.FilterRecipe,
+        val paintLayer: EditLayerState.PaintLayerState
+    )
+
     private val ioExecutor = Executors.newSingleThreadExecutor()
 
+    // Non-destructive 3-layer document state
     private var originalBitmap: Bitmap? = null
-    private var currentBitmap: Bitmap? = null
-    private var filterBaseBitmap: Bitmap? = null
-    private var activeFilterState: MediaController.SavedFilterState? = null
-    private val historyStack = ArrayDeque<Bitmap>()
+    private var croppedBaseBitmap: Bitmap? = null
+    private var filteredPhotoBitmap: Bitmap? = null
+    private var filterRecipe: EditLayerState.FilterRecipe = EditLayerState.FilterRecipe()
+    private var paintLayerState: EditLayerState.PaintLayerState = EditLayerState.PaintLayerState()
+    private var displayBitmap: Bitmap? = null
+    private val historyStack = ArrayDeque<EditorSnapshot>()
 
     private lateinit var rootContainer: FrameLayout
     private lateinit var landingView: FrameLayout
@@ -63,6 +74,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var undoIconBtn: ImageView
     private lateinit var resetTextBtn: TextView
     private lateinit var compareBtn: ImageView
+    private lateinit var layerBadgeView: TextView
     private lateinit var saveCircleBtn: ImageView
     private lateinit var activePanelContainer: FrameLayout
 
@@ -74,9 +86,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var resumeDraftBtn: TextView
     private lateinit var recentsSection: LinearLayout
     private lateinit var recentsRow: LinearLayout
-    private lateinit var landingDebugDot: View
-    private lateinit var editorDebugDot: View
-    private lateinit var editorUpdateDot: View
+    private lateinit var landingSettingsDot: View
+    private lateinit var editorSettingsDot: View
+    private lateinit var bottomUpdateDot: View
 
     private var availableRelease: UpdateChecker.ReleaseInfo? = null
     private var checkingUpdate = false
@@ -168,14 +180,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun rebuildUiPreservingState() {
-        val wasInEditor = editorShell.visibility == View.VISIBLE && currentBitmap != null
+        val wasInEditor = editorShell.visibility == View.VISIBLE && displayBitmap != null
         closeActivePanel()
         AppTheme.applySystemBars(this)
         rootContainer.setBackgroundColor(AppTheme.bgPrimary)
         rootContainer.layoutDirection = AppLocale.layoutDirection()
         buildShellViews(showEditor = wasInEditor)
         if (wasInEditor) {
-            previewView.setBitmaps(currentBitmap, originalBitmap)
+            previewView.setBitmaps(displayBitmap, originalBitmap)
             updateTopBarState()
         }
         availableRelease?.let { applyUpdateAvailableUi(it) }
@@ -231,7 +243,7 @@ class MainActivity : AppCompatActivity() {
                 val release = UpdateChecker.ReleaseInfo(
                     tagName = tag,
                     versionName = tag.removePrefix("v").removePrefix("V"),
-                    title = intent.getStringExtra(UpdateChecker.EXTRA_RELEASE_TITLE) ?: "TelePhoto Editor $tag",
+                    title = intent.getStringExtra(UpdateChecker.EXTRA_RELEASE_TITLE) ?: "Minab Image Editor $tag",
                     notes = intent.getStringExtra(UpdateChecker.EXTRA_RELEASE_NOTES) ?: "",
                     apkDownloadUrl = intent.getStringExtra(UpdateChecker.EXTRA_RELEASE_APK_URL),
                     releasePageUrl = intent.getStringExtra(UpdateChecker.EXTRA_RELEASE_PAGE_URL)
@@ -270,93 +282,53 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
         }
 
-        // Top utility bar: [v1.3.0]   [Check Update] [Theme] [Settings] [🐞]
-        val topUtilBar = LinearLayout(this).apply {
+        // === TOP BAR: Left = App Logo + "Minab Image Editor" | Right = Minimalist Settings ===
+        val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(AndroidUtilities.dp(14f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(6f))
+            setBackgroundColor(AppTheme.bgSurface)
+            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(10f), AndroidUtilities.dp(12f), AndroidUtilities.dp(10f))
         }
 
-        val versionPill = TextView(this).apply {
-            text = "v${BuildConfig.VERSION_NAME}"
-            setTextColor(AppTheme.textSecondary)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            typeface = AndroidUtilities.bold()
-            setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(5f), AndroidUtilities.dp(10f), AndroidUtilities.dp(5f))
-            background = GradientDrawable().apply {
-                setColor(AppTheme.bgElevated)
-                cornerRadius = AndroidUtilities.dp(12f).toFloat()
-            }
+        val topLogo = ImageView(this).apply {
+            setImageResource(R.drawable.ic_minab_logo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
         }
-
-        manualUpdateBtn = TextView(this).apply {
-            text = AppLocale.t("check_update")
-            setTextColor(AppTheme.accentText)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            typeface = AndroidUtilities.bold()
-            gravity = Gravity.CENTER
-            maxLines = 1
-            setPadding(AndroidUtilities.dp(11f), AndroidUtilities.dp(6f), AndroidUtilities.dp(11f), AndroidUtilities.dp(6f))
-            background = GradientDrawable().apply {
-                setColor(AppTheme.bgElevated)
-                cornerRadius = AndroidUtilities.dp(13f).toFloat()
-                setStroke(AndroidUtilities.dp(1f), 0x442AABEE)
-            }
-            setOnClickListener { runManualUpdateCheck() }
-        }
-
-        val themeQuickBtn = TextView(this).apply {
-            text = if (AppTheme.isDark) "☀" else "🌙"
+        val topAppName = TextView(this).apply {
+            text = AppLocale.t("app_name")
             setTextColor(AppTheme.textPrimary)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(AppTheme.bgElevated)
-            }
-            setOnClickListener {
-                AppTheme.toggle(this@MainActivity)
-                rebuildUiPreservingState()
-            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17.5f)
+            typeface = AndroidUtilities.bold()
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(AndroidUtilities.dp(10f), 0, AndroidUtilities.dp(8f), 0)
         }
 
-        val settingsBtn = ImageView(this).apply {
-            setImageResource(R.drawable.ic_tg_settings)
-            setColorFilter(AppTheme.iconTint)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(AndroidUtilities.dp(8f), AndroidUtilities.dp(8f), AndroidUtilities.dp(8f), AndroidUtilities.dp(8f))
-            setOnClickListener {
-                SettingsDialog.show(this@MainActivity) {
-                    rebuildUiPreservingState()
-                }
-            }
+        val (settingsFrame, settingsDot) = makeIconWithBadge(
+            iconRes = R.drawable.ic_tg_settings,
+            badgeColor = AppTheme.danger,
+            tintIcon = true
+        ) {
+            openSettings()
         }
+        landingSettingsDot = settingsDot
 
-        val (debugBtnFrame, debugDot) = makeLadybugButton()
-        landingDebugDot = debugDot
+        topBar.addView(topLogo, LinearLayout.LayoutParams(AndroidUtilities.dp(30f), AndroidUtilities.dp(30f)))
+        topBar.addView(topAppName, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        topBar.addView(settingsFrame, LinearLayout.LayoutParams(AndroidUtilities.dp(40f), AndroidUtilities.dp(40f)))
+        landingRoot.addView(topBar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
-        topUtilBar.addView(versionPill)
-        topUtilBar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        topUtilBar.addView(
-            manualUpdateBtn,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = AndroidUtilities.dp(6f)
-            }
+        // Subtle divider under top bar
+        landingRoot.addView(
+            View(this).apply { setBackgroundColor(AppTheme.borderSubtle) },
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, AndroidUtilities.dp(0.8f).coerceAtLeast(1))
         )
-        topUtilBar.addView(
-            themeQuickBtn,
-            LinearLayout.LayoutParams(AndroidUtilities.dp(34f), AndroidUtilities.dp(34f)).apply {
-                marginEnd = AndroidUtilities.dp(4f)
-            }
-        )
-        topUtilBar.addView(settingsBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(38f), AndroidUtilities.dp(38f)))
-        topUtilBar.addView(debugBtnFrame, LinearLayout.LayoutParams(AndroidUtilities.dp(40f), AndroidUtilities.dp(40f)))
-        landingRoot.addView(topUtilBar)
 
+        // === CENTER SCROLLABLE BODY ===
         val scrollContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(AndroidUtilities.dp(24f), AndroidUtilities.dp(18f), AndroidUtilities.dp(24f), AndroidUtilities.dp(28f))
+            setPadding(AndroidUtilities.dp(24f), AndroidUtilities.dp(18f), AndroidUtilities.dp(24f), AndroidUtilities.dp(24f))
         }
 
         // In-app Update Banner
@@ -428,21 +400,25 @@ class MainActivity : AppCompatActivity() {
         landingCrashBanner.addView(crashIcon, LinearLayout.LayoutParams(AndroidUtilities.dp(24f), AndroidUtilities.dp(24f)))
         landingCrashBanner.addView(crashText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
-        // Hero title
+        // Hero Logo + Title
+        val heroLogo = ImageView(this).apply {
+            setImageResource(R.drawable.ic_minab_logo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
         val title = TextView(this).apply {
             text = AppLocale.t("app_name")
             setTextColor(AppTheme.textPrimary)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 25f)
             typeface = AndroidUtilities.bold()
             gravity = Gravity.CENTER
-            setPadding(0, AndroidUtilities.dp(28f), 0, 0)
+            setPadding(0, AndroidUtilities.dp(14f), 0, 0)
         }
         val subtitle = TextView(this).apply {
             text = AppLocale.t("landing_subtitle")
             setTextColor(AppTheme.textSecondary)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             gravity = Gravity.CENTER
-            setPadding(0, AndroidUtilities.dp(10f), 0, AndroidUtilities.dp(28f))
+            setPadding(0, AndroidUtilities.dp(8f), 0, AndroidUtilities.dp(24f))
         }
 
         // Primary Pick Photo button
@@ -503,11 +479,11 @@ class MainActivity : AppCompatActivity() {
         )
         shortcutsRow.addView(resumeDraftBtn)
 
-        // Recent Edits horizontal strip
+        // Recent Edits strip
         recentsSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            setPadding(0, AndroidUtilities.dp(28f), 0, 0)
+            setPadding(0, AndroidUtilities.dp(24f), 0, 0)
         }
         val recentsTitle = TextView(this).apply {
             text = AppLocale.t("recent_photos")
@@ -539,6 +515,12 @@ class MainActivity : AppCompatActivity() {
                 bottomMargin = AndroidUtilities.dp(10f)
             }
         )
+        scrollContent.addView(
+            heroLogo,
+            LinearLayout.LayoutParams(AndroidUtilities.dp(92f), AndroidUtilities.dp(92f)).apply {
+                topMargin = AndroidUtilities.dp(16f)
+            }
+        )
         scrollContent.addView(title)
         scrollContent.addView(subtitle)
         scrollContent.addView(pickBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
@@ -550,8 +532,93 @@ class MainActivity : AppCompatActivity() {
             addView(scrollContent)
         }
         landingRoot.addView(landingScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        landingView.addView(landingRoot, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
+        // === BOTTOM UTILITY BAR: [v1.4.0]  |  [Check Update]  |  [🌙 Dark / ☀ Light] ===
+        landingRoot.addView(
+            View(this).apply { setBackgroundColor(AppTheme.borderSubtle) },
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, AndroidUtilities.dp(0.8f).coerceAtLeast(1))
+        )
+
+        val bottomUtilBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(AppTheme.bgSurface)
+            setPadding(AndroidUtilities.dp(14f), AndroidUtilities.dp(10f), AndroidUtilities.dp(14f), AndroidUtilities.dp(12f))
+        }
+
+        val versionPill = TextView(this).apply {
+            text = "v${BuildConfig.VERSION_NAME}"
+            setTextColor(AppTheme.textSecondary)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = AndroidUtilities.bold()
+            maxLines = 1
+            setPadding(AndroidUtilities.dp(11f), AndroidUtilities.dp(7f), AndroidUtilities.dp(11f), AndroidUtilities.dp(7f))
+            background = GradientDrawable().apply {
+                setColor(AppTheme.bgElevated)
+                cornerRadius = AndroidUtilities.dp(14f).toFloat()
+            }
+        }
+
+        val updateFrame = FrameLayout(this)
+        manualUpdateBtn = TextView(this).apply {
+            text = AppLocale.t("check_update")
+            setTextColor(AppTheme.accentText)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = AndroidUtilities.bold()
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(AndroidUtilities.dp(13f), AndroidUtilities.dp(7f), AndroidUtilities.dp(13f), AndroidUtilities.dp(7f))
+            background = GradientDrawable().apply {
+                setColor(AppTheme.bgElevated)
+                cornerRadius = AndroidUtilities.dp(14f).toFloat()
+                setStroke(AndroidUtilities.dp(1f), 0x442AABEE)
+            }
+            setOnClickListener { runManualUpdateCheck() }
+        }
+        bottomUpdateDot = View(this).apply {
+            visibility = View.GONE
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(AppTheme.accent)
+            }
+        }
+        updateFrame.addView(manualUpdateBtn, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+        updateFrame.addView(
+            bottomUpdateDot,
+            FrameLayout.LayoutParams(AndroidUtilities.dp(8f), AndroidUtilities.dp(8f), Gravity.TOP or Gravity.END).apply {
+                topMargin = AndroidUtilities.dp(2f)
+                rightMargin = AndroidUtilities.dp(2f)
+            }
+        )
+
+        val themeToggleBtn = TextView(this).apply {
+            text = if (AppTheme.isDark) "☀ ${AppLocale.t("light_mode")}" else "🌙 ${AppLocale.t("dark_mode")}"
+            setTextColor(AppTheme.textPrimary)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = AndroidUtilities.bold()
+            gravity = Gravity.CENTER
+            maxLines = 1
+            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(7f), AndroidUtilities.dp(12f), AndroidUtilities.dp(7f))
+            background = GradientDrawable().apply {
+                setColor(AppTheme.bgElevated)
+                cornerRadius = AndroidUtilities.dp(14f).toFloat()
+                setStroke(AndroidUtilities.dp(1f), AppTheme.borderSubtle)
+            }
+            setOnClickListener {
+                AppTheme.toggle(this@MainActivity)
+                rebuildUiPreservingState()
+            }
+        }
+
+        bottomUtilBar.addView(versionPill)
+        bottomUtilBar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        bottomUtilBar.addView(updateFrame)
+        bottomUtilBar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        bottomUtilBar.addView(themeToggleBtn)
+        landingRoot.addView(bottomUtilBar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        landingView.addView(landingRoot, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         rootContainer.addView(
             landingView,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
@@ -566,7 +633,7 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
 
-        // === TOP BAR: `←` (Back to Main Menu!) + Title + Undo + Reset + Compare + Gallery + Update + 🐞 ===
+        // === TOP BAR: `←` + Title/LayerBadge + Undo + Reset + Compare + Gallery + Settings ===
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -582,14 +649,29 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { returnToMainMenu() }
         }
 
+        val titleCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(AndroidUtilities.dp(2f), 0, AndroidUtilities.dp(4f), 0)
+        }
         val titleView = TextView(this).apply {
             text = AppLocale.t("app_name")
             setTextColor(AppTheme.textPrimary)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             typeface = AndroidUtilities.bold()
             maxLines = 1
-            setPadding(AndroidUtilities.dp(4f), 0, 0, 0)
+            ellipsize = TextUtils.TruncateAt.END
         }
+        layerBadgeView = TextView(this).apply {
+            text = "✦ ${AppLocale.t("layers_badge")}"
+            setTextColor(AppTheme.accentText)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+            typeface = AndroidUtilities.bold()
+            maxLines = 1
+            visibility = View.GONE
+        }
+        titleCol.addView(titleView)
+        titleCol.addView(layerBadgeView)
 
         undoIconBtn = ImageView(this).apply {
             setImageResource(R.drawable.ic_tg_undo)
@@ -603,10 +685,10 @@ class MainActivity : AppCompatActivity() {
         resetTextBtn = TextView(this).apply {
             text = AppLocale.t("reset")
             setTextColor(AppTheme.accentText)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             typeface = AndroidUtilities.bold()
             gravity = Gravity.CENTER
-            setPadding(AndroidUtilities.dp(5f), 0, AndroidUtilities.dp(4f), 0)
+            setPadding(AndroidUtilities.dp(4f), 0, AndroidUtilities.dp(4f), 0)
             visibility = View.GONE
             setOnClickListener { resetToOriginal() }
         }
@@ -640,27 +722,22 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { launchPhotoPicker() }
         }
 
-        val (updateBtnFrame, updDot) = makeIconWithBadge(R.drawable.ic_tg_update, AppTheme.accent, tintIcon = true) {
-            val rel = availableRelease
-            if (rel != null) {
-                UpdateDialogHelper.showUpdateDialog(this, rel)
-            } else {
-                runManualUpdateCheck()
-            }
+        val (editorSettingsFrame, edSetDot) = makeIconWithBadge(
+            iconRes = R.drawable.ic_tg_settings,
+            badgeColor = AppTheme.danger,
+            tintIcon = true
+        ) {
+            openSettings()
         }
-        editorUpdateDot = updDot
-
-        val (debugBtnFrame, dbgDot) = makeLadybugButton()
-        editorDebugDot = dbgDot
+        editorSettingsDot = edSetDot
 
         topBar.addView(backBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(40f), AndroidUtilities.dp(42f)))
-        topBar.addView(titleView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        topBar.addView(titleCol, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         topBar.addView(undoIconBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(36f), AndroidUtilities.dp(40f)))
         topBar.addView(resetTextBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, AndroidUtilities.dp(40f)))
         topBar.addView(compareBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(36f), AndroidUtilities.dp(40f)))
         topBar.addView(changePhotoBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(36f), AndroidUtilities.dp(40f)))
-        topBar.addView(updateBtnFrame, LinearLayout.LayoutParams(AndroidUtilities.dp(36f), AndroidUtilities.dp(40f)))
-        topBar.addView(debugBtnFrame, LinearLayout.LayoutParams(AndroidUtilities.dp(38f), AndroidUtilities.dp(40f)))
+        topBar.addView(editorSettingsFrame, LinearLayout.LayoutParams(AndroidUtilities.dp(38f), AndroidUtilities.dp(40f)))
         editorShell.addView(topBar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, AndroidUtilities.dp(52f)))
 
         // === INTERACTIVE ZOOM + COMPARE IMAGE PREVIEW ===
@@ -672,18 +749,18 @@ class MainActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         )
 
-        // === BOTTOM FLOATING PILL + BLUE CIRCLE SAVE/EXPORT BUTTON ===
+        // === BOTTOM FLOATING PILL: Crop | Filters (Samsung) | Tone (Samsung) | Draw/Text + Export ===
         val bottomRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(AppTheme.bgSurface)
-            setPadding(AndroidUtilities.dp(20f), AndroidUtilities.dp(12f), AndroidUtilities.dp(16f), AndroidUtilities.dp(16f))
+            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(12f), AndroidUtilities.dp(16f), AndroidUtilities.dp(16f))
         }
 
         val toolPill = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(AndroidUtilities.dp(12f), 0, AndroidUtilities.dp(12f), 0)
+            setPadding(AndroidUtilities.dp(8f), 0, AndroidUtilities.dp(8f), 0)
             background = GradientDrawable().apply {
                 setColor(AppTheme.bgElevated)
                 cornerRadius = AndroidUtilities.dp(28f).toFloat()
@@ -692,12 +769,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         val cropIcon = makePillIcon(R.drawable.ic_tg_crop) { openCropMode() }
+        val filtersIcon = makePillIcon(R.drawable.ic_samsung_filters) { openFilterOrToneMode(TelegramFilterPanel.InitialTab.FILTERS) }
+        val toneIcon = makePillIcon(R.drawable.ic_tone_brightness) { openFilterOrToneMode(TelegramFilterPanel.InitialTab.TUNE) }
         val drawIcon = makePillIcon(R.drawable.ic_tg_draw) { openPaintMode() }
-        val tuneIcon = makePillIcon(R.drawable.ic_tone_brightness) { openAdjustMode() }
 
         toolPill.addView(cropIcon, LinearLayout.LayoutParams(0, AndroidUtilities.dp(50f), 1f))
+        toolPill.addView(filtersIcon, LinearLayout.LayoutParams(0, AndroidUtilities.dp(50f), 1f))
+        toolPill.addView(toneIcon, LinearLayout.LayoutParams(0, AndroidUtilities.dp(50f), 1f))
         toolPill.addView(drawIcon, LinearLayout.LayoutParams(0, AndroidUtilities.dp(50f), 1f))
-        toolPill.addView(tuneIcon, LinearLayout.LayoutParams(0, AndroidUtilities.dp(50f), 1f))
 
         saveCircleBtn = ImageView(this).apply {
             setImageResource(R.drawable.ic_tg_save)
@@ -713,7 +792,7 @@ class MainActivity : AppCompatActivity() {
         bottomRow.addView(
             toolPill,
             LinearLayout.LayoutParams(0, AndroidUtilities.dp(52f), 1f).apply {
-                marginEnd = AndroidUtilities.dp(14f)
+                marginEnd = AndroidUtilities.dp(12f)
             }
         )
         bottomRow.addView(
@@ -728,10 +807,12 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun makeLadybugButton(): Pair<FrameLayout, View> {
-        return makeIconWithBadge(R.drawable.ic_debug_ladybug, AppTheme.danger, tintIcon = false) {
-            openDebugConsole()
-        }
+    private fun openSettings() {
+        SettingsDialog.show(
+            context = this,
+            onOpenDebugConsole = { openDebugConsole() },
+            onSettingsChanged = { rebuildUiPreservingState() }
+        )
     }
 
     private fun makeIconWithBadge(
@@ -747,7 +828,7 @@ class MainActivity : AppCompatActivity() {
             setImageResource(iconRes)
             if (tintIcon) setColorFilter(AppTheme.iconTint)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(AndroidUtilities.dp(7f), AndroidUtilities.dp(7f), AndroidUtilities.dp(7f), AndroidUtilities.dp(7f))
+            setPadding(AndroidUtilities.dp(8f), AndroidUtilities.dp(8f), AndroidUtilities.dp(8f), AndroidUtilities.dp(8f))
         }
         val dot = View(this).apply {
             visibility = View.GONE
@@ -760,9 +841,9 @@ class MainActivity : AppCompatActivity() {
         frame.addView(icon, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         frame.addView(
             dot,
-            FrameLayout.LayoutParams(AndroidUtilities.dp(9f), AndroidUtilities.dp(9f), Gravity.TOP or Gravity.END).apply {
-                topMargin = AndroidUtilities.dp(5f)
-                rightMargin = AndroidUtilities.dp(5f)
+            FrameLayout.LayoutParams(AndroidUtilities.dp(8.5f), AndroidUtilities.dp(8.5f), Gravity.TOP or Gravity.END).apply {
+                topMargin = AndroidUtilities.dp(6f)
+                rightMargin = AndroidUtilities.dp(6f)
             }
         )
         return frame to dot
@@ -773,7 +854,7 @@ class MainActivity : AppCompatActivity() {
             setImageResource(iconRes)
             setColorFilter(AppTheme.iconTint)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(AndroidUtilities.dp(13f), AndroidUtilities.dp(13f), AndroidUtilities.dp(13f), AndroidUtilities.dp(13f))
+            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(12f), AndroidUtilities.dp(12f), AndroidUtilities.dp(12f))
             setOnClickListener { onClick() }
         }
     }
@@ -787,13 +868,13 @@ class MainActivity : AppCompatActivity() {
     private fun refreshDebugBadges() {
         val hasCrash = CrashLogManager.hasUnreadCrash()
         val dotVis = if (hasCrash) View.VISIBLE else View.GONE
-        landingDebugDot.visibility = dotVis
-        editorDebugDot.visibility = dotVis
+        landingSettingsDot.visibility = dotVis
+        editorSettingsDot.visibility = dotVis
         landingCrashBanner.visibility = dotVis
     }
 
     private fun refreshLandingExtras() {
-        val hasDraft = currentBitmap != null || DraftManager.hasDraft(this)
+        val hasDraft = displayBitmap != null || DraftManager.hasDraft(this)
         resumeDraftBtn.visibility = if (hasDraft) View.VISIBLE else View.GONE
 
         val recentFiles = DraftManager.listRecentFiles(this)
@@ -847,10 +928,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resumeLastDraft() {
-        if (currentBitmap != null) {
+        if (displayBitmap != null) {
             landingView.visibility = View.GONE
             editorShell.visibility = View.VISIBLE
-            previewView.setBitmaps(currentBitmap, originalBitmap)
+            previewView.setBitmaps(displayBitmap, originalBitmap)
             updateTopBarState()
             return
         }
@@ -883,9 +964,11 @@ class MainActivity : AppCompatActivity() {
         closeActivePanel()
         historyStack.clear()
         originalBitmap = original
-        currentBitmap = edited
-        filterBaseBitmap = edited
-        activeFilterState = null
+        croppedBaseBitmap = edited
+        filteredPhotoBitmap = edited
+        filterRecipe = EditLayerState.FilterRecipe()
+        paintLayerState = EditLayerState.PaintLayerState()
+        displayBitmap = edited
         previewView.setBitmaps(edited, original)
         landingView.visibility = View.GONE
         editorShell.visibility = View.VISIBLE
@@ -960,7 +1043,7 @@ class MainActivity : AppCompatActivity() {
     private fun applyUpdateAvailableUi(release: UpdateChecker.ReleaseInfo) {
         landingUpdateBannerText.text = "${AppLocale.t("update_available")} (${release.tagName})"
         landingUpdateBanner.visibility = View.VISIBLE
-        editorUpdateDot.visibility = View.VISIBLE
+        bottomUpdateDot.visibility = View.VISIBLE
     }
 
     private fun launchPhotoPicker() {
@@ -988,34 +1071,72 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun pushSnapshotForUndo() {
+        val base = croppedBaseBitmap ?: return
+        val filtered = filteredPhotoBitmap ?: base
+        if (historyStack.size >= 10) {
+            historyStack.removeLast()
+        }
+        historyStack.addFirst(
+            EditorSnapshot(
+                croppedBase = base,
+                filteredPhoto = filtered,
+                filterRecipe = filterRecipe.deepCopy(),
+                paintLayer = paintLayerState.shallowCopy()
+            )
+        )
+    }
+
+    private fun refreshCompositePreview() {
+        val filtered = filteredPhotoBitmap ?: croppedBaseBitmap ?: return
+        val composited = EditLayerState.compositePhotoWithPaintLayer(filtered, paintLayerState)
+        displayBitmap = composited
+        previewView.setBitmaps(composited, originalBitmap)
+        updateTopBarState()
+        saveDraftAsync(composited, originalBitmap)
+    }
+
     private fun openCropMode() {
-        val bmp = currentBitmap ?: return
+        val bmp = displayBitmap ?: return
         CrashLogManager.addBreadcrumb("Opened Crop mode")
         val panel = TelegramCropPanel(
             this,
             bmp,
             onCancel = { closeActivePanel() },
             onDone = { cropped ->
-                commitEditedBitmap(cropped, resetNonDestructiveFilter = true)
+                pushSnapshotForUndo()
+                croppedBaseBitmap = cropped
+                filteredPhotoBitmap = cropped
+                filterRecipe = EditLayerState.FilterRecipe()
+                paintLayerState = EditLayerState.PaintLayerState()
+                refreshCompositePreview()
                 closeActivePanel()
             }
         )
         showPanel(panel)
     }
 
-    private fun openAdjustMode() {
-        val cur = currentBitmap ?: return
-        val baseForFilter = filterBaseBitmap ?: cur
-        CrashLogManager.addBreadcrumb("Opened Tone/Adjust mode")
+    private fun openFilterOrToneMode(initialTab: TelegramFilterPanel.InitialTab) {
+        val base = croppedBaseBitmap ?: return
+        CrashLogManager.addBreadcrumb("Opened ${initialTab.name} mode (non-destructive)")
+        val overlayPreview = EditLayerState.buildCombinedOverlayBitmap(
+            paintState = paintLayerState,
+            width = base.width,
+            height = base.height
+        )
         val panel = TelegramFilterPanel(
             context = this,
-            sourceBitmap = baseForFilter,
-            initialFilterState = activeFilterState,
+            sourceBitmap = base,
+            initialRecipe = filterRecipe.deepCopy(),
+            initialTab = initialTab,
+            paintOverlayPreview = overlayPreview,
             onCancel = { closeActivePanel() },
-            onDone = { filtered, nextFilterState ->
-                filterBaseBitmap = baseForFilter
-                activeFilterState = if (nextFilterState.isEmpty()) null else nextFilterState
-                commitEditedBitmap(filtered, resetNonDestructiveFilter = false)
+            onDone = { filtered, nextRecipe ->
+                pushSnapshotForUndo()
+                filteredPhotoBitmap = filtered
+                filterRecipe = nextRecipe
+                // Layer 3 (paintLayerState) stays 100% preserved & untouched!
+                refreshCompositePreview()
                 closeActivePanel()
             }
         )
@@ -1024,14 +1145,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openPaintMode() {
-        val bmp = currentBitmap ?: return
-        CrashLogManager.addBreadcrumb("Opened Draw/Paint mode")
+        val filtered = filteredPhotoBitmap ?: croppedBaseBitmap ?: return
+        CrashLogManager.addBreadcrumb("Opened Draw/Paint mode (editable layer=${paintLayerState.hasContent})")
         val panel = TelegramPaintPanel(
-            this,
-            bmp,
+            context = this,
+            sourceBitmap = filtered,
+            initialPaintState = paintLayerState.shallowCopy(),
             onCancel = { closeActivePanel() },
-            onDone = { painted ->
-                commitEditedBitmap(painted, resetNonDestructiveFilter = true)
+            onDone = { nextPaintLayer ->
+                pushSnapshotForUndo()
+                paintLayerState = nextPaintLayer
+                // Layer 1 (croppedBaseBitmap) and Layer 2 (filterRecipe / filteredPhotoBitmap) stay untouched!
+                refreshCompositePreview()
                 closeActivePanel()
             }
         )
@@ -1058,56 +1183,37 @@ class MainActivity : AppCompatActivity() {
         refreshDebugBadges()
     }
 
-    private fun commitEditedBitmap(next: Bitmap, resetNonDestructiveFilter: Boolean) {
-        if (next === currentBitmap) return
-        currentBitmap?.let { prev ->
-            if (historyStack.size >= 8) {
-                historyStack.removeLast()
-            }
-            historyStack.addFirst(prev)
-        }
-        currentBitmap = next
-        if (resetNonDestructiveFilter) {
-            filterBaseBitmap = next
-            activeFilterState = null
-        }
-        previewView.setBitmaps(next, originalBitmap)
-        updateTopBarState()
-        saveDraftAsync(next, originalBitmap)
-    }
-
     private fun performGlobalUndo() {
         if (historyStack.isEmpty()) return
-        val prev = historyStack.removeFirst()
-        currentBitmap = prev
-        filterBaseBitmap = prev
-        activeFilterState = null
-        previewView.setBitmaps(prev, originalBitmap)
-        updateTopBarState()
-        saveDraftAsync(prev, originalBitmap)
+        val snap = historyStack.removeFirst()
+        croppedBaseBitmap = snap.croppedBase
+        filteredPhotoBitmap = snap.filteredPhoto
+        filterRecipe = snap.filterRecipe
+        paintLayerState = snap.paintLayer
+        refreshCompositePreview()
     }
 
     private fun resetToOriginal() {
         val orig = originalBitmap ?: return
         historyStack.clear()
         val copy = orig.copy(Bitmap.Config.ARGB_8888, false)
-        currentBitmap = copy
-        filterBaseBitmap = copy
-        activeFilterState = null
-        previewView.setBitmaps(copy, originalBitmap)
-        updateTopBarState()
-        saveDraftAsync(copy, originalBitmap)
+        croppedBaseBitmap = copy
+        filteredPhotoBitmap = copy
+        filterRecipe = EditLayerState.FilterRecipe()
+        paintLayerState = EditLayerState.PaintLayerState()
+        refreshCompositePreview()
     }
 
     private fun updateTopBarState() {
-        val hasEdits = historyStack.isNotEmpty() || (activeFilterState != null && !activeFilterState!!.isEmpty())
+        val hasEdits = historyStack.isNotEmpty() || !filterRecipe.isEmpty() || paintLayerState.hasContent
         undoIconBtn.visibility = if (historyStack.isNotEmpty()) View.VISIBLE else View.GONE
         resetTextBtn.visibility = if (hasEdits) View.VISIBLE else View.GONE
         compareBtn.visibility = if (hasEdits && originalBitmap != null) View.VISIBLE else View.GONE
+        layerBadgeView.visibility = if (paintLayerState.hasContent) View.VISIBLE else View.GONE
     }
 
     private fun openExportDialog() {
-        val bmp = currentBitmap ?: return
+        val bmp = displayBitmap ?: return
         ExportOptionsDialog.show(
             context = this,
             bitmap = bmp,

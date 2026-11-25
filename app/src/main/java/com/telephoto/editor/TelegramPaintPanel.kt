@@ -34,21 +34,19 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * Pixel-identical Telegram Paint & Text mode (frames 00:36 - 01:40):
- * - Top bar: Undo curved arrow icon | Clear All (switches to Clear | Done while typing text)
- * - Left-edge Telegram PaintWeightChooserView (tapered grey wedge slider + center size preview dot)
- * - DRAW pill: Rainbow Color Ring + 6 circular brush icons (Pen, Arrow, Marker, Neon, Blur, Eraser) + `+` 5-Shape popup menu
- * - Active Shape floating controls: Fill / Outline toggle + Place + Cancel
- * - 2-row x 7-column dark floating Color Palette popup with `<` and `+` custom color picker
- * - Inline TEXT bar: Rainbow Color Ring + Alignment + Frame Style `A` + `+` + `Roboto ↕` Font selector dropdown
- * - Bottom row: `✕` | DRAW | TEXT | `✓`
+ * Non-destructive GPU Paint & Text mode (Minab Image Editor):
+ * - Preserves strokes, arrows, shapes, mosaic, per-stroke Undo history, and live Text entities
+ *   as an independent transparent Layer 3 across Filters/Tone switches until final Save!
+ * - Re-entering Draw/Text lets you Undo previous arrows/strokes, Erase them cleanly without
+ *   affecting the photo, move/edit/delete Text boxes, or Clear All!
  */
 @SuppressLint("ClickableViewAccessibility")
 class TelegramPaintPanel(
     context: Context,
     private val sourceBitmap: Bitmap,
+    initialPaintState: EditLayerState.PaintLayerState? = null,
     private val onCancel: () -> Unit,
-    private val onDone: (Bitmap) -> Unit
+    private val onDone: (EditLayerState.PaintLayerState) -> Unit
 ) : FrameLayout(context) {
 
     private enum class PaintTab { DRAW, TEXT }
@@ -75,7 +73,6 @@ class TelegramPaintPanel(
         ShapeOption("Arrow", R.drawable.photo_arrowshape, Brush.Shape.SHAPE_TYPE_ARROW)
     )
 
-    // Per-brush weight memory initialized to each Telegram brush's real defaultWeight
     private val brushWeights = FloatArray(brushSlots.size) { idx ->
         brushSlots[idx].brush.defaultWeight.coerceIn(0.05f, 1.0f)
     }
@@ -83,6 +80,13 @@ class TelegramPaintPanel(
     private val paintQueue = DispatchQueue("TelegramPaintQueue")
     private val undoStore = UndoStore()
     private val exportExecutor = Executors.newSingleThreadExecutor()
+
+    // Cross-visit non-destructive stroke undo history (compact lossless PNG byte arrays; empty array = blank layer)
+    private val historyLock = Any()
+    private val persistedUndoStack = mutableListOf<ByteArray>()
+    private val currentSessionSnapshots = mutableListOf<ByteArray>()
+    @Volatile
+    private var isClosing = false
 
     private val stageContainer: FrameLayout
     private val canvasWrapper: FrameLayout
@@ -98,7 +102,7 @@ class TelegramPaintPanel(
     private val undoIconBtn: ImageView
     private val clearAllBtn: TextView
 
-    // Active Shape mini floating controls (Fill / Place)
+    // Active Shape mini floating controls
     private val shapeActionBar: LinearLayout
     private val shapeFillToggleBtn: TextView
 
@@ -123,7 +127,7 @@ class TelegramPaintPanel(
     private val drawTabLabel: TextView
     private val textTabLabel: TextView
 
-    // Floating popups (Shape menu & Font menu)
+    // Floating popups
     private val popupBackdrop: FrameLayout
     private val shapePopupCard: LinearLayout
     private val fontPopupCard: LinearLayout
@@ -140,12 +144,24 @@ class TelegramPaintPanel(
     init {
         setBackgroundColor(Color.BLACK)
 
+        if (initialPaintState != null) {
+            synchronized(historyLock) {
+                persistedUndoStack.addAll(initialPaintState.strokeUndoPngStack)
+                val initialBytes = initialPaintState.strokeLayerPng ?: ByteArray(0)
+                currentSessionSnapshots.add(initialBytes)
+            }
+        } else {
+            synchronized(historyLock) {
+                currentSessionSnapshots.add(ByteArray(0))
+            }
+        }
+
         val mainColumn = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
         addView(mainColumn, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
-        // === TOP BAR (Normal: Undo arrow + Clear All | Typing: Clear + Done) ===
+        // === TOP BAR ===
         val topBarHost = FrameLayout(context).apply {
             setBackgroundColor(Color.BLACK)
         }
@@ -160,18 +176,10 @@ class TelegramPaintPanel(
             setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f))
             alpha = 0.35f
             isEnabled = false
-            setOnClickListener {
-                if (renderView.hasActiveShape()) {
-                    renderView.clearShape()
-                    selectBrush(selectedBrushIndex)
-                    updateShapeActionVisibility()
-                } else if (undoStore.canUndo()) {
-                    undoStore.undo()
-                }
-            }
+            setOnClickListener { performPaintUndo() }
         }
         clearAllBtn = TextView(context).apply {
-            text = "Clear All"
+            text = AppLocale.t("clear_all")
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             typeface = AndroidUtilities.bold()
@@ -185,6 +193,11 @@ class TelegramPaintPanel(
                     renderView.clearAll()
                     textOverlay.clearActiveOrAll(false)
                     undoStore.reset()
+                    synchronized(historyLock) {
+                        persistedUndoStack.clear()
+                        currentSessionSnapshots.clear()
+                        currentSessionSnapshots.add(ByteArray(0))
+                    }
                     updateShapeActionVisibility()
                     updateUndoState()
                 }
@@ -201,7 +214,7 @@ class TelegramPaintPanel(
             setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(4f), AndroidUtilities.dp(16f), AndroidUtilities.dp(4f))
         }
         val typingClearBtn = TextView(context).apply {
-            text = "Clear"
+            text = AppLocale.t("clear_logs")
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             typeface = AndroidUtilities.bold()
@@ -209,7 +222,7 @@ class TelegramPaintPanel(
             setOnClickListener { textOverlay.clearActiveOrAll(true) }
         }
         val typingDoneBtn = TextView(context).apply {
-            text = "Done"
+            text = AppLocale.t("done")
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             typeface = AndroidUtilities.bold()
@@ -247,21 +260,27 @@ class TelegramPaintPanel(
 
         val maxSide = 1600f
         val scale = min(1f, maxSide / max(sourceBitmap.width, sourceBitmap.height).toFloat())
-        val paintSize = Size(
-            (sourceBitmap.width * scale).roundToInt().coerceAtLeast(64).toFloat(),
-            (sourceBitmap.height * scale).roundToInt().coerceAtLeast(64).toFloat()
-        )
+        val paintW = (sourceBitmap.width * scale).roundToInt().coerceAtLeast(64)
+        val paintH = (sourceBitmap.height * scale).roundToInt().coerceAtLeast(64)
+        val paintSize = Size(paintW.toFloat(), paintH.toFloat())
 
         val painting = Painting(paintSize, sourceBitmap, 0, null)
-        // Upstream Telegram passes a transparent paint layer bitmap to RenderView so strokes & eraser
-        // operate cleanly on the overlay while sourceBitmap stays untouched behind it in baseImageView.
-        val transparentPaintLayer = Bitmap.createBitmap(
-            paintSize.width.toInt(),
-            paintSize.height.toInt(),
-            Bitmap.Config.ARGB_8888
-        )
-        CrashLogManager.addBreadcrumb("Paint opened (${paintSize.width.toInt()}x${paintSize.height.toInt()})")
-        renderView = RenderView(context, painting, transparentPaintLayer, null, null).apply {
+
+        // Restore previous transparent stroke layer (if any) directly onto the GPU Paint canvas!
+        val initialPaintLayer = Bitmap.createBitmap(paintW, paintH, Bitmap.Config.ARGB_8888)
+        EditLayerState.decodeMutableArgb(initialPaintState?.strokeLayerPng)?.let { prevLayer ->
+            val c = Canvas(initialPaintLayer)
+            c.drawBitmap(
+                prevLayer,
+                null,
+                Rect(0, 0, paintW, paintH),
+                Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+            )
+            prevLayer.recycle()
+        }
+
+        CrashLogManager.addBreadcrumb("Paint opened (${paintW}x${paintH}, restored=${initialPaintState?.hasContent == true})")
+        renderView = RenderView(context, painting, initialPaintLayer, null, null).apply {
             isOpaque = false
             setQueue(paintQueue)
             setUndoStore(this@TelegramPaintPanel.undoStore)
@@ -320,7 +339,10 @@ class TelegramPaintPanel(
         }
         canvasWrapper.addView(textOverlay, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
-        // Telegram's REAL Left-Edge Tapered Wedge Brush/Text Size Chooser!
+        if (initialPaintState != null && initialPaintState.textEntities.isNotEmpty()) {
+            textOverlay.restoreEntitySnapshots(initialPaintState.textEntities)
+        }
+
         weightChooserView = PaintWeightChooserView(context).apply {
             setRenderView(renderView)
             setColorSwatch(currentSwatch)
@@ -337,7 +359,7 @@ class TelegramPaintPanel(
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         )
 
-        // Floating Shape Controls (Outline/Fill + Place) shown only while placing a Shape
+        // Floating Shape Controls (Outline/Fill + Place)
         shapeActionBar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -349,19 +371,19 @@ class TelegramPaintPanel(
             }
         }
         shapeFillToggleBtn = TextView(context).apply {
-            text = if (PersistColorPalette.getInstance(UserConfig.selectedAccount).fillShapes) "Filled" else "Outline"
+            text = if (PersistColorPalette.getInstance(UserConfig.selectedAccount).fillShapes) AppLocale.t("filled") else AppLocale.t("outline")
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             typeface = AndroidUtilities.bold()
             setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(6f), AndroidUtilities.dp(12f), AndroidUtilities.dp(6f))
             setOnClickListener {
                 val filled = renderView.toggleShapeFill()
-                text = if (filled) "Filled" else "Outline"
+                text = if (filled) AppLocale.t("filled") else AppLocale.t("outline")
                 shapeOverlayView.invalidate()
             }
         }
         val shapePlaceBtn = TextView(context).apply {
-            text = "Place"
+            text = AppLocale.t("place")
             setTextColor(0xFF4DA3FF.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             typeface = AndroidUtilities.bold()
@@ -370,6 +392,7 @@ class TelegramPaintPanel(
                 renderView.commitShape()
                 shapeOverlayView.invalidate()
                 updateShapeActionVisibility()
+                captureSessionSnapshotAsync()
             }
         }
         shapeActionBar.addView(shapeFillToggleBtn)
@@ -424,6 +447,9 @@ class TelegramPaintPanel(
             override fun onFinishedDrawing(moved: Boolean) {
                 shapeOverlayView.invalidate()
                 updateShapeActionVisibility()
+                if (moved && !renderView.hasActiveShape()) {
+                    captureSessionSnapshotAsync()
+                }
             }
             override fun onFirstDraw() {}
             override fun shouldDraw(): Boolean = activeTab == PaintTab.DRAW
@@ -449,15 +475,10 @@ class TelegramPaintPanel(
         }
         mainColumn.addView(bottomArea, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
-        // 1) Color Palette Bar (hidden until Rainbow Color Ring tapped)
         colorPaletteBar = TelegramColorPaletteBar(
             context,
-            onColorSelected = { color ->
-                applySelectedColor(color)
-            },
-            onClose = {
-                toggleColorPalette(false)
-            },
+            onColorSelected = { color -> applySelectedColor(color) },
+            onClose = { toggleColorPalette(false) },
             onEyedropperRequested = {
                 toggleColorPalette(false)
                 setEyedropperMode(true)
@@ -467,7 +488,6 @@ class TelegramPaintPanel(
         }
         bottomArea.addView(colorPaletteBar, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
-        // 2) DRAW Tool Pill (frame 00:37)
         drawPillRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -510,7 +530,6 @@ class TelegramPaintPanel(
         drawPillRow.addView(drawPill, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, AndroidUtilities.dp(50f)))
         bottomArea.addView(drawPillRow)
 
-        // 3) TEXT Tool Bar (frames 01:05 & 01:10)
         textPillRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -572,7 +591,6 @@ class TelegramPaintPanel(
         textPillRow.addView(fontPill, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, AndroidUtilities.dp(36f)))
         bottomArea.addView(textPillRow)
 
-        // 4) Bottom Navigation Row: `✕` | DRAW | TEXT | `✓`
         bottomTabsRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -588,7 +606,7 @@ class TelegramPaintPanel(
             }
         }
         drawTabLabel = TextView(context).apply {
-            text = "DRAW"
+            text = AppLocale.t("draw")
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             typeface = AndroidUtilities.bold()
             letterSpacing = 0.05f
@@ -596,7 +614,7 @@ class TelegramPaintPanel(
             setOnClickListener { switchTab(PaintTab.DRAW) }
         }
         textTabLabel = TextView(context).apply {
-            text = "TEXT"
+            text = AppLocale.t("text")
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             typeface = AndroidUtilities.bold()
             letterSpacing = 0.05f
@@ -607,7 +625,7 @@ class TelegramPaintPanel(
             setImageResource(R.drawable.ic_tg_check)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f))
-            setOnClickListener { bakeAndFinish() }
+            setOnClickListener { saveLayerAndFinish() }
         }
 
         bottomTabsRow.addView(closeBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(46f), AndroidUtilities.dp(46f)))
@@ -616,7 +634,6 @@ class TelegramPaintPanel(
         bottomTabsRow.addView(checkBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(46f), AndroidUtilities.dp(46f)))
         bottomArea.addView(bottomTabsRow)
 
-        // === FLOATING POPUPS (Shape menu & Font dropdown) ===
         popupBackdrop = FrameLayout(context).apply {
             visibility = View.GONE
             setOnClickListener { hidePopups() }
@@ -713,10 +730,73 @@ class TelegramPaintPanel(
             layoutCanvasToAspect(right - left, bottom - top)
         }
 
-        // Initial defaults
         applySelectedColor(PersistColorPalette.COLOR_RED)
         selectBrush(0)
         switchTab(PaintTab.DRAW)
+        updateUndoState()
+    }
+
+    private fun performPaintUndo() {
+        if (renderView.hasActiveShape()) {
+            renderView.clearShape()
+            selectBrush(selectedBrushIndex)
+            updateShapeActionVisibility()
+            return
+        }
+        if (undoStore.canUndo()) {
+            undoStore.undo()
+            exportExecutor.execute {
+                synchronized(historyLock) {
+                    if (currentSessionSnapshots.size > 1) {
+                        currentSessionSnapshots.removeAt(currentSessionSnapshots.lastIndex)
+                    }
+                }
+            }
+            updateUndoState()
+            return
+        }
+        val prevPng: ByteArray? = synchronized(historyLock) {
+            if (persistedUndoStack.isNotEmpty()) {
+                val popped = persistedUndoStack.removeAt(persistedUndoStack.lastIndex)
+                currentSessionSnapshots.clear()
+                currentSessionSnapshots.add(popped)
+                popped
+            } else {
+                null
+            }
+        }
+        if (prevPng != null) {
+            exportExecutor.execute {
+                val bmp = EditLayerState.decodeMutableArgb(prevPng)
+                renderView.replaceCanvasBitmap(bmp)
+                post { updateUndoState() }
+            }
+        }
+    }
+
+    private fun captureSessionSnapshotAsync() {
+        if (isClosing) return
+        exportExecutor.execute {
+            if (isClosing) return@execute
+            try {
+                val snap = renderView.snapshotBitmap ?: return@execute
+                val png = EditLayerState.encodeTransparentLayerOrNull(snap) ?: ByteArray(0)
+                snap.recycle()
+                synchronized(historyLock) {
+                    currentSessionSnapshots.add(png)
+                    while (persistedUndoStack.size + currentSessionSnapshots.size > EditLayerState.MAX_STROKE_UNDO_SNAPSHOTS + 1) {
+                        if (persistedUndoStack.isNotEmpty()) {
+                            persistedUndoStack.removeAt(0)
+                        } else if (currentSessionSnapshots.size > 2) {
+                            currentSessionSnapshots.removeAt(0)
+                        } else {
+                            break
+                        }
+                    }
+                }
+            } catch (_: Throwable) {
+            }
+        }
     }
 
     private fun layoutCanvasToAspect(availW: Int, availH: Int) {
@@ -740,6 +820,7 @@ class TelegramPaintPanel(
             renderView.commitShape()
             shapeOverlayView.invalidate()
             updateShapeActionVisibility()
+            captureSessionSnapshotAsync()
         }
         activeTab = tab
         hidePopups()
@@ -793,9 +874,9 @@ class TelegramPaintPanel(
 
     private fun updateClearLabel() {
         clearAllBtn.text = if (activeTab == PaintTab.TEXT && textOverlay.selectedEntity != null) {
-            "Delete Text"
+            AppLocale.t("delete_text")
         } else {
-            "Clear All"
+            AppLocale.t("clear_all")
         }
     }
 
@@ -806,13 +887,14 @@ class TelegramPaintPanel(
             val isArrow = renderView.currentBrush is Brush.Shape.Arrow
             shapeFillToggleBtn.visibility = if (isArrow) View.GONE else View.VISIBLE
             val filled = PersistColorPalette.getInstance(UserConfig.selectedAccount).fillShapes
-            shapeFillToggleBtn.text = if (filled) "Filled" else "Outline"
+            shapeFillToggleBtn.text = if (filled) AppLocale.t("filled") else AppLocale.t("outline")
         }
         updateUndoState()
     }
 
     private fun updateUndoState() {
-        val can = undoStore.canUndo() || renderView.hasActiveShape()
+        val hasPersisted = synchronized(historyLock) { persistedUndoStack.isNotEmpty() }
+        val can = undoStore.canUndo() || hasPersisted || renderView.hasActiveShape()
         undoIconBtn.isEnabled = can
         undoIconBtn.alpha = if (can) 1f else 0.35f
     }
@@ -887,7 +969,7 @@ class TelegramPaintPanel(
         val slot = brushSlots[index]
         val brush = slot.brush
         renderView.painting.setMosaicMode(slot.isMosaic)
-        CrashLogManager.addBreadcrumb("Selected brush #${index}: ${if (slot.isMosaic) "Mosaic" else brush.javaClass.simpleName}")
+        CrashLogManager.addBreadcrumb("Selected brush #$index: ${if (slot.isMosaic) "Mosaic" else brush.javaClass.simpleName}")
         renderView.setBrush(brush)
         val weight = brushWeights[index]
         currentSwatch.brushWeight = weight
@@ -995,36 +1077,66 @@ class TelegramPaintPanel(
         updateStyleIcon()
     }
 
-    private fun bakeAndFinish() {
+    /**
+     * Exports Layer 3 non-destructively (transparent strokes PNG + per-stroke undo history
+     * + live editable text snapshots + cached transparent text PNG) without flattening into the photo!
+     */
+    private fun saveLayerAndFinish() {
+        isClosing = true
         textOverlay.finishInlineEditing()
         if (renderView.hasActiveShape()) {
             renderView.commitShape()
         }
+        val textSnapshots = textOverlay.exportEntitySnapshots()
+        val textOverlayBmp = textOverlay.renderTransparentOverlayBitmap(sourceBitmap.width, sourceBitmap.height)
+
         exportExecutor.execute {
             val paintOverlayBitmap = renderView.getResultBitmap(false, true)
+            val finalStrokePng = EditLayerState.encodeTransparentLayerOrNull(paintOverlayBitmap)
+            paintOverlayBitmap?.recycle()
+
+            val textLayerPng = EditLayerState.encodeTransparentLayerOrNull(textOverlayBmp)
+            textOverlayBmp?.recycle()
+
+            val nextUndoStack: List<ByteArray> = synchronized(historyLock) {
+                if (finalStrokePng == null) {
+                    emptyList()
+                } else {
+                    val combined = mutableListOf<ByteArray>()
+                    combined.addAll(persistedUndoStack)
+                    // Add all prior states captured in this session before the final state
+                    if (currentSessionSnapshots.size > 1) {
+                        combined.addAll(currentSessionSnapshots.dropLast(1))
+                    } else if (currentSessionSnapshots.size == 1 && !currentSessionSnapshots[0].contentEquals(finalStrokePng)) {
+                        combined.add(currentSessionSnapshots[0])
+                    }
+                    if (combined.isEmpty()) {
+                        combined.add(ByteArray(0))
+                    }
+                    if (combined.size > EditLayerState.MAX_STROKE_UNDO_SNAPSHOTS) {
+                        combined.takeLast(EditLayerState.MAX_STROKE_UNDO_SNAPSHOTS)
+                    } else {
+                        combined
+                    }
+                }
+            }
+
+            val nextLayerState = EditLayerState.PaintLayerState(
+                strokeLayerPng = finalStrokePng,
+                strokeUndoPngStack = nextUndoStack,
+                textEntities = textSnapshots,
+                textLayerPng = textLayerPng
+            )
+
             post {
-                val result = sourceBitmap.copy(Bitmap.Config.ARGB_8888, true)
-                val canvas = Canvas(result)
-                if (paintOverlayBitmap != null) {
-                    val dst = Rect(0, 0, result.width, result.height)
-                    canvas.drawBitmap(
-                        paintOverlayBitmap,
-                        null,
-                        dst,
-                        Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-                    )
-                    paintOverlayBitmap.recycle()
-                }
-                if (textOverlay.hasTextEntities()) {
-                    textOverlay.renderOntoBitmap(result)
-                }
                 cleanup()
-                onDone(result)
+                onDone(nextLayerState)
             }
         }
     }
 
     fun cleanup() {
+        isClosing = true
         textOverlay.finishInlineEditing()
         renderView.shutdown()
         paintQueue.recycle()

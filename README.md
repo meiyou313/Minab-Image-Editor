@@ -1,39 +1,25 @@
-# TelePhoto Editor
+# Minab Image Editor
 
-A lightweight, standalone Android photo editor powered **directly by the real open-source photo editing engines extracted from [Telegram for Android (`DrKLO/Telegram`)](https://github.com/DrKLO/Telegram)** — with zero third-party wrapper photo-editor libraries and zero messaging/chat/network bloat.
+A lightweight, standalone Android photo editor powered **directly by the real open-source photo editing engines extracted from [Telegram for Android (`DrKLO/Telegram`)](https://github.com/DrKLO/Telegram)** — enhanced with Samsung Gallery-style Filters & Tone controls, non-destructive layered Paint/Text/Filter editing, 20 world languages, Dark/Light themes, and pro export tools (GPLv2).
 
-## Extracted Telegram Engines
+## Highlights
 
-All core editing pipelines come straight from Telegram for Android (`13.2.2`, commit `21f7d109da6ab3506c9e9577f98c6a38771ab335`):
+1. **Non-Destructive Layered Architecture**
+   - **Layer 1 (Base/Cropped Photo)**, **Layer 2 (Filters + Tone + Curves + Blur Recipe)**, and **Layer 3 (Editable Paint Strokes, Arrows, Shapes & Text Entities)** remain separate until final export.
+   - Draw arrows, shapes, or text, switch to Filters or Tone, and return to Draw anytime to undo, erase, move, edit, or delete your strokes and text without baking them into the photo!
+2. **Samsung Gallery-Style Filters & Tone Engine (OpenGL ES 2.0)**
+   - **12 Live-Thumbnail Filters** (`Original`, `Auto`, `Warm`, `Cool`, `Light`, `Frosty`, `Blossom`, `Ivory`, `Soft`, `KissMe`, `Grayscale`, `B&W`) with `+` custom filter saving and a vertical tick-mark **Intensity (`0–100`)** ruler slider.
+   - **Full Tone Suite** (`Light Balance`, `Brightness`, `Exposure`, `Contrast`, `Highlights`, `Shadows`, `Saturation`, `Tint`, `Temperature`, `Sharpness`, `Definition`, `Fade`, `Vignette`, `Grain`, `Soften Skin`, `Tint Shadows`, `Tint Highlights`), **4-Channel Curves**, and **Radial/Linear Tilt-Shift Blur**.
+3. **GPU Paint, Brushes, Shapes, Eyedropper, Mosaic & Inline Text**
+   - Real Telegram GPU brushes (`Pen`, `Arrow`, `Marker`, `Neon`, `Blur`, `Mosaic`, `Eraser`), 5 shapes, live color Eyedropper with loupe, and draggable/rotatable/scalable inline Text overlays.
+4. **Crop, Free-Rotate & Quick Aspect-Ratio Strip**
+   - Free rotation wheel (-45° to +45°), 90° rotate, horizontal mirror, and quick one-tap ratio presets (`Free`, `Original`, `1:1`, `4:3`, `3:4`, `9:12`, `3:2`, `2:3`, `16:9`, `9:16`, `4:5`, `5:4`, `5:7`).
+5. **Pro Tools, Themes, 20 Languages & Diagnostics**
+   - Dark & Light Mode, 20 world languages (English default + automatic RTL), Hold-to-Compare & Pinch-to-Zoom (`1×–5×`), `JPEG`/`PNG`/`WebP` Export & Share dialog, Auto-Draft recovery, Recent Edits strip, GitHub Release Update Checker, and Debug Console with `.txt` export inside Settings.
 
-1. **OpenGL ES 2.0 Photo Filters, Curves & Tilt-Shift Blur**
-   - `FilterShaders.java` & `FilterGLThread.java`
-   - Real native C++ CLAHE/CDT Auto-Enhance (`calcCDT` extracted from `TMessagesProj/jni/image.cpp`)
-   - Full parameter suite: **Enhance, Exposure, Contrast, Saturation, Warmth, Fade, Highlights, Shadows, Vignette, Grain, Sharpen, Soften Skin, Tint Shadows, Tint Highlights**
-   - **RGB / Luminance Curves** (`PhotoFilterCurvesControl.java`, Catmull-Rom spline interpolation)
-   - **Radial & Linear Tilt-Shift Blur** (`PhotoFilterBlurControl.java`)
-   - Press-and-hold preview to compare with original
-2. **Crop, Free-Rotate & Aspect Ratio Engine**
-   - `CropView.java`, `CropAreaView.java`, `CropRotationWheel.java`, `CropGestureDetector.java`, `CropState.java`, `CropTransform.java`
-   - Free rotation wheel (-45° to +45°), 90° rotate, horizontal mirror/flip, and aspect-ratio lock presets
-3. **GPU-Accelerated Paint, Brushes, Shapes & Text**
-   - `Painting.java`, `RenderView.java`, `ShaderSet.java`, `Brush.java`, `ShapeDetector.java`, `UndoStore.java` + original Telegram `.webp` brush stamp textures & `shapes.dat`
-   - Real Telegram GPU brushes: **Pen (Radial), Arrow, Marker (Elliptical), Neon, Blur** (backed by native C++ `stackBlurBitmap` from `image.cpp`), **Eraser**, plus **Circle / Rectangle / Star** shape tools
-   - Interactive draggable / scalable / rotatable **Text overlays** (Outlined, Filled, Translucent styles)
+## Download APK
 
-## Build & Download APK
-
-A ready-to-use GitHub Actions workflow is included at [`docs/github-workflow-android-build.yml`](docs/github-workflow-android-build.yml) (JDK 17, Android SDK 35, NDK 27 + CMake 3.22, JUnit tests, and `assembleDebug`, uploading `TelePhoto-Editor-debug-apk` as a build artifact).
-
-To enable automatic cloud APK builds on GitHub Actions:
-1. Grant workflow push scope (`gh auth refresh -s workflow`) and move `docs/github-workflow-android-build.yml` to `.github/workflows/android-build.yml`, **or**
-2. In the GitHub web UI, open **Actions → set up a workflow yourself** and paste the contents of `docs/github-workflow-android-build.yml`.
-
-To build locally (requires JDK 17 + Android SDK 35 + NDK):
-
-```bash
-gradle testDebugUnitTest assembleDebug
-```
+Download the latest signed APK directly from [GitHub Releases](https://github.com/meiyou313/Minab-Image-Editor/releases/latest).
 
 ## License & Upstream Attribution
 

@@ -182,6 +182,34 @@ public class Painting {
         }
     }
 
+    public void replaceBitmapTexture(final Bitmap nextBitmap) {
+        if (renderView == null) {
+            return;
+        }
+        renderView.performInContext(() -> {
+            int targetW = Math.max(1, (int) size.width);
+            int targetH = Math.max(1, (int) size.height);
+            Bitmap prepared;
+            if (nextBitmap == null || nextBitmap.isRecycled()) {
+                prepared = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888);
+            } else if (nextBitmap.getWidth() != targetW || nextBitmap.getHeight() != targetH) {
+                prepared = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888);
+                Canvas c = new Canvas(prepared);
+                c.drawBitmap(nextBitmap, null, new RectF(0, 0, targetW, targetH), new Paint(Paint.FILTER_BITMAP_FLAG));
+            } else {
+                prepared = nextBitmap.copy(Bitmap.Config.ARGB_8888, false);
+            }
+            if (bitmapTexture != null) {
+                bitmapTexture.cleanResources(false);
+            }
+            bitmapTexture = new Texture(prepared);
+            bitmapTexture.texture();
+            if (delegate != null) {
+                delegate.contentChanged();
+            }
+        });
+    }
+
     private boolean helperShown;
     private float helperAlpha, helperApplyAlpha;
     private ValueAnimator helperAnimator, helperApplyAnimator;

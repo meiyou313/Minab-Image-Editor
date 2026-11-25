@@ -27,7 +27,7 @@ import java.net.URL
 import java.util.concurrent.Executors
 
 /**
- * Checks GitHub Releases (meiyou313/TelePhoto-Editor) for newer versions of TelePhoto Editor.
+ * Checks GitHub Releases (meiyou313/Minab-Image-Editor) for newer versions of Minab Image Editor.
  * Supports:
  * 1) Automatic background periodic checks via Android JobScheduler + System Notification
  * 2) In-app update notification banner & changelog dialog on launch
@@ -35,8 +35,8 @@ import java.util.concurrent.Executors
  */
 object UpdateChecker {
 
-    const val LATEST_RELEASE_API = "https://api.github.com/repos/meiyou313/TelePhoto-Editor/releases/latest"
-    const val RELEASES_PAGE_URL = "https://github.com/meiyou313/TelePhoto-Editor/releases"
+    const val LATEST_RELEASE_API = "https://api.github.com/repos/meiyou313/Minab-Image-Editor/releases/latest"
+    const val RELEASES_PAGE_URL = "https://github.com/meiyou313/Minab-Image-Editor/releases"
 
     const val EXTRA_OPEN_UPDATE_DIALOG = "extra_open_update_dialog"
     const val EXTRA_RELEASE_TAG = "extra_release_tag"
@@ -102,7 +102,7 @@ object UpdateChecker {
             val tag = obj.optString("tag_name", "").trim()
             if (tag.isEmpty()) return null
             val version = tag.removePrefix("v").removePrefix("V")
-            val name = obj.optString("name", "").ifBlank { "TelePhoto Editor $tag" }
+            val name = obj.optString("name", "").ifBlank { "Minab Image Editor $tag" }
             val body = obj.optString("body", "").trim()
             val htmlUrl = obj.optString("html_url", RELEASES_PAGE_URL).ifBlank { RELEASES_PAGE_URL }
             val publishedAt = obj.optString("published_at", "")
@@ -144,7 +144,7 @@ object UpdateChecker {
                 connectTimeout = 10_000
                 readTimeout = 10_000
                 setRequestProperty("Accept", "application/vnd.github+json")
-                setRequestProperty("User-Agent", "TelePhoto-Editor-Android/$currentVersion")
+                setRequestProperty("User-Agent", "Minab-Image-Editor-Android/$currentVersion")
             }
             val code = conn.responseCode
             if (code !in 200..299) {
@@ -253,13 +253,13 @@ object UpdateChecker {
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_tg_update)
-            .setContentTitle("آپدیت جدید TelePhoto Editor (${release.tagName})")
+            .setContentTitle("Minab Image Editor (${release.tagName})")
             .setContentText(shortBody)
             .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .setContentIntent(contentPi)
-            .addAction(R.drawable.ic_tg_update, "دانلود APK", downloadPi)
+            .addAction(R.drawable.ic_tg_update, AppLocale.t("download_apk"), downloadPi)
             .build()
 
         return try {
@@ -280,7 +280,7 @@ object UpdateChecker {
                     "App Updates",
                     NotificationManager.IMPORTANCE_DEFAULT
                 ).apply {
-                    description = "Notifies when a new TelePhoto Editor release is published on GitHub."
+                    description = "Notifies when a new Minab Image Editor release is published on GitHub."
                 }
                 mgr.createNotificationChannel(channel)
             }

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">TelePhoto Editor</string>
+    <string name="app_name">Minab Image Editor</string>
 
     <!-- Telegram upstream string keys required by CropView / CropRotationWheel / Brush -->
     <string name="AccDescrAspectRatio">Aspect Ratio</string>

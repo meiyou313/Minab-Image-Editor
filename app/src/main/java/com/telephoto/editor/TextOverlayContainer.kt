@@ -180,6 +180,89 @@ class TextOverlayContainer(context: Context) : FrameLayout(context) {
         prevSelected?.isSelectedEntity = true
     }
 
+    fun renderTransparentOverlayBitmap(targetWidth: Int, targetHeight: Int): Bitmap? {
+        if (!hasTextEntities() || width <= 0 || height <= 0 || targetWidth <= 0 || targetHeight <= 0) {
+            return null
+        }
+        val out = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+        renderOntoBitmap(out)
+        return out
+    }
+
+    fun exportEntitySnapshots(): List<EditLayerState.TextEntitySnapshot> {
+        val w = width.toFloat().coerceAtLeast(1f)
+        val h = height.toFloat().coerceAtLeast(1f)
+        val list = mutableListOf<EditLayerState.TextEntitySnapshot>()
+        for (i in 0 until childCount) {
+            val child = getChildAt(i) as? TelegramTextEntityView ?: continue
+            val txt = child.editText.text?.toString()?.trim() ?: ""
+            if (txt.isEmpty()) continue
+            list.add(
+                EditLayerState.TextEntitySnapshot(
+                    text = txt,
+                    color = child.textColorValue,
+                    style = child.textStyle,
+                    font = child.fontChoice,
+                    alignment = child.textAlignmentGravity,
+                    baseTextSizeSp = child.baseTextSizeSp,
+                    normOffsetX = child.translationX / w,
+                    normOffsetY = child.translationY / h,
+                    scale = child.scaleX,
+                    rotation = child.rotation
+                )
+            )
+        }
+        return list
+    }
+
+    fun restoreEntitySnapshots(snapshots: List<EditLayerState.TextEntitySnapshot>) {
+        clearActiveOrAll(false)
+        if (snapshots.isEmpty()) return
+        val applyTranslations = {
+            val w = width.toFloat().coerceAtLeast(1f)
+            val h = height.toFloat().coerceAtLeast(1f)
+            for (i in 0 until minOf(childCount, snapshots.size)) {
+                val child = getChildAt(i) as? TelegramTextEntityView ?: continue
+                val snap = snapshots[i]
+                child.translationX = snap.normOffsetX * w
+                child.translationY = snap.normOffsetY * h
+            }
+        }
+        snapshots.forEach { snap ->
+            val entity = TelegramTextEntityView(context).apply {
+                textColorValue = snap.color
+                textStyle = snap.style
+                fontChoice = snap.font
+                textAlignmentGravity = snap.alignment
+                baseTextSizeSp = snap.baseTextSizeSp
+                editText.setText(snap.text)
+                scaleX = snap.scale
+                scaleY = snap.scale
+                rotation = snap.rotation
+                applyVisuals()
+            }
+            val lp = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER
+            }
+            addView(entity, lp)
+        }
+        if (width > 0 && height > 0) {
+            applyTranslations()
+        } else {
+            addOnLayoutChangeListener(object : OnLayoutChangeListener {
+                override fun onLayoutChange(
+                    v: View?, l: Int, t: Int, r: Int, b: Int,
+                    ol: Int, ot: Int, or: Int, ob: Int
+                ) {
+                    if (r - l > 0 && b - t > 0) {
+                        removeOnLayoutChangeListener(this)
+                        applyTranslations()
+                    }
+                }
+            })
+        }
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     inner class TelegramTextEntityView(context: Context) : FrameLayout(context) {
 

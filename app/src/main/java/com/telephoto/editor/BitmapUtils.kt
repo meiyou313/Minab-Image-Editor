@@ -175,7 +175,7 @@ object BitmapUtils {
         quality: Int = 95
     ): Uri? {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val displayName = "TelePhoto_$timestamp.${format.extension}"
+        val displayName = "MinabImage_$timestamp.${format.extension}"
         val compressFmt = compressFormatFor(format)
         val q = quality.coerceIn(10, 100)
 
@@ -185,7 +185,7 @@ object BitmapUtils {
                 put(MediaStore.Images.Media.MIME_TYPE, format.mimeType)
                 put(
                     MediaStore.Images.Media.RELATIVE_PATH,
-                    "${Environment.DIRECTORY_PICTURES}/TelePhotoEditor"
+                    "${Environment.DIRECTORY_PICTURES}/MinabImageEditor"
                 )
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }
@@ -211,7 +211,7 @@ object BitmapUtils {
             @Suppress("DEPRECATION")
             val dir = File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                "TelePhotoEditor"
+                "MinabImageEditor"
             )
             if (!dir.exists()) dir.mkdirs()
             val file = File(dir, displayName)
@@ -246,7 +246,7 @@ object BitmapUtils {
             // Clean up older shared temp files
             dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(4)?.forEach { it.delete() }
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val outFile = File(dir, "TelePhoto_$timestamp.${format.extension}")
+            val outFile = File(dir, "MinabImage_$timestamp.${format.extension}")
             FileOutputStream(outFile).use { out ->
                 bitmap.compress(compressFormatFor(format), quality.coerceIn(10, 100), out)
             }

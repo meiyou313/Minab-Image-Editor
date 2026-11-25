@@ -240,7 +240,7 @@ object DebugConsoleDialog {
                     Toast.makeText(context, "Select at least one log", Toast.LENGTH_SHORT).show()
                 } else {
                     val report = CrashLogManager.formatEntriesReport(context, chosen, "Selected ${chosen.size}")
-                    copyToClipboard(context, "TelePhoto Selected Logs", report)
+                    copyToClipboard(context, "Minab Editor Selected Logs", report)
                 }
             }
         }
@@ -260,7 +260,7 @@ object DebugConsoleDialog {
                     Toast.makeText(context, "Select at least one log", Toast.LENGTH_SHORT).show()
                 } else {
                     val report = CrashLogManager.formatEntriesReport(context, chosen, "Selected ${chosen.size}")
-                    saveTxtAndNotify(context, "TelePhoto_Selected", report)
+                    saveTxtAndNotify(context, "MinabEditor_Selected", report)
                 }
             }
         }
@@ -422,7 +422,7 @@ object DebugConsoleDialog {
                 cornerRadius = AndroidUtilities.dp(13f).toFloat()
             }
             setOnClickListener {
-                copyToClipboard(context, "TelePhoto Debug Report", CrashLogManager.formatFullReport(context))
+                copyToClipboard(context, "Minab Editor Debug Report", CrashLogManager.formatFullReport(context))
             }
         }
         val exportFullBtn = TextView(context).apply {
@@ -438,7 +438,7 @@ object DebugConsoleDialog {
                 cornerRadius = AndroidUtilities.dp(13f).toFloat()
             }
             setOnClickListener {
-                saveTxtAndNotify(context, "TelePhoto_FullReport", CrashLogManager.formatFullReport(context))
+                saveTxtAndNotify(context, "MinabEditor_FullReport", CrashLogManager.formatFullReport(context))
             }
         }
         footer.addView(
@@ -550,7 +550,7 @@ object DebugConsoleDialog {
                 cornerRadius = AndroidUtilities.dp(8f).toFloat()
             }
             setOnClickListener {
-                copyToClipboard(context, "TelePhoto ${entry.level}", CrashLogManager.formatEntryForCopy(entry))
+                copyToClipboard(context, "Minab Editor ${entry.level}", CrashLogManager.formatEntryForCopy(entry))
             }
         }
         val saveOneTxtBtn = TextView(context).apply {
@@ -566,7 +566,7 @@ object DebugConsoleDialog {
             }
             setOnClickListener {
                 val report = CrashLogManager.formatEntriesReport(context, listOf(entry), "Single ${entry.level}")
-                saveTxtAndNotify(context, "TelePhoto_${entry.level}_${entry.id}", report)
+                saveTxtAndNotify(context, "MinabEditor_${entry.level}_${entry.id}", report)
             }
         }
 

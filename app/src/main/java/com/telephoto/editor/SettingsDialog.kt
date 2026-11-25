@@ -7,7 +7,6 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.Gravity
-import android.view.ViewGroup
 import android.view.Window
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -17,11 +16,17 @@ import org.telegram.messenger.AndroidUtilities
 import org.telegram.messenger.R
 
 /**
- * Settings dialog for Dark/Light Mode and 20 World Languages (default English).
+ * Minab Image Editor Settings dialog:
+ * - Debug Console entry (moved cleanly inside Settings with live crash/error count badge)
+ * - 20 World Languages ordered by global prominence & user base, with RTL languages grouped at the bottom
  */
 object SettingsDialog {
 
-    fun show(context: Context, onSettingsChanged: () -> Unit) {
+    fun show(
+        context: Context,
+        onOpenDebugConsole: () -> Unit,
+        onSettingsChanged: () -> Unit
+    ) {
         val dialog = Dialog(context)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -59,58 +64,75 @@ object SettingsDialog {
         header.addView(closeBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(38f), AndroidUtilities.dp(38f)))
         root.addView(header)
 
-        // Theme section
-        val themeLabel = TextView(context).apply {
-            text = AppLocale.t("theme")
-            setTextColor(AppTheme.textSecondary)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-            typeface = AndroidUtilities.bold()
-            setPadding(0, AndroidUtilities.dp(14f), 0, AndroidUtilities.dp(8f))
-        }
-        root.addView(themeLabel)
+        // === DEBUG CONSOLE CARD (inside Settings!) ===
+        val allLogs = CrashLogManager.getAllEntries()
+        val crashCount = allLogs.count { it.level == CrashLogManager.LEVEL_CRASH }
+        val unreadCrash = CrashLogManager.hasUnreadCrash()
 
-        val themeRow = LinearLayout(context).apply {
+        val debugRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-        }
-
-        fun makeThemeBtn(mode: AppTheme.Mode, label: String): TextView {
-            val selected = AppTheme.currentMode == mode
-            return TextView(context).apply {
-                text = label
-                setTextColor(if (selected) Color.WHITE else AppTheme.textPrimary)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-                typeface = AndroidUtilities.bold()
-                gravity = Gravity.CENTER
-                maxLines = 1
-                setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(11f), AndroidUtilities.dp(12f), AndroidUtilities.dp(11f))
-                background = GradientDrawable().apply {
-                    setColor(if (selected) AppTheme.accent else AppTheme.bgElevated)
-                    cornerRadius = AndroidUtilities.dp(14f).toFloat()
-                }
-                setOnClickListener {
-                    if (AppTheme.currentMode != mode) {
-                        AppTheme.setMode(context, mode)
-                        dialog.dismiss()
-                        onSettingsChanged()
-                    }
-                }
+            setPadding(AndroidUtilities.dp(14f), AndroidUtilities.dp(12f), AndroidUtilities.dp(14f), AndroidUtilities.dp(12f))
+            background = GradientDrawable().apply {
+                setColor(if (unreadCrash) AppTheme.crashBannerBg else AppTheme.bgElevated)
+                cornerRadius = AndroidUtilities.dp(14f).toFloat()
+                setStroke(
+                    AndroidUtilities.dp(1f),
+                    if (unreadCrash) 0x88FF453A.toInt() else AppTheme.borderSubtle
+                )
+            }
+            setOnClickListener {
+                dialog.dismiss()
+                onOpenDebugConsole()
             }
         }
+        val bugIcon = ImageView(context).apply {
+            setImageResource(R.drawable.ic_debug_ladybug)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+        }
+        val debugTextCol = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(AndroidUtilities.dp(12f), 0, AndroidUtilities.dp(8f), 0)
+        }
+        val debugTitle = TextView(context).apply {
+            text = AppLocale.t("debug_console")
+            setTextColor(AppTheme.textPrimary)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+            typeface = AndroidUtilities.bold()
+        }
+        val debugSub = TextView(context).apply {
+            text = if (allLogs.isEmpty()) {
+                AppLocale.t("debug_subtitle_ok")
+            } else {
+                "$crashCount crashes • ${allLogs.size - crashCount} errors"
+            }
+            setTextColor(if (unreadCrash) AppTheme.crashBannerText else AppTheme.textSecondary)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            setPadding(0, AndroidUtilities.dp(2f), 0, 0)
+        }
+        debugTextCol.addView(debugTitle)
+        debugTextCol.addView(debugSub)
 
-        themeRow.addView(
-            makeThemeBtn(AppTheme.Mode.DARK, "🌙  ${AppLocale.t("dark_mode")}"),
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginEnd = AndroidUtilities.dp(8f)
+        val debugChevron = TextView(context).apply {
+            text = if (allLogs.isNotEmpty()) "${allLogs.size}  ›" else "›"
+            setTextColor(if (unreadCrash) AppTheme.danger else AppTheme.textSecondary)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = AndroidUtilities.bold()
+        }
+        debugRow.addView(bugIcon, LinearLayout.LayoutParams(AndroidUtilities.dp(26f), AndroidUtilities.dp(26f)))
+        debugRow.addView(debugTextCol, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        debugRow.addView(debugChevron)
+        root.addView(
+            debugRow,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = AndroidUtilities.dp(14f)
             }
         )
-        themeRow.addView(
-            makeThemeBtn(AppTheme.Mode.LIGHT, "☀  ${AppLocale.t("light_mode")}"),
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        root.addView(themeRow)
 
-        // Language section (20 major world languages, default English)
+        // === LANGUAGE SECTION (20 languages ordered by prominence, RTL at the bottom) ===
         val langLabel = TextView(context).apply {
             text = "${AppLocale.t("language")} (${AppLocale.SUPPORTED_LANGUAGES.size})"
             setTextColor(AppTheme.textSecondary)
@@ -123,7 +145,21 @@ object SettingsDialog {
         val langList = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
+
+        var addedRtlHeader = false
         AppLocale.SUPPORTED_LANGUAGES.forEach { lang ->
+            if (lang.isRtl && !addedRtlHeader) {
+                addedRtlHeader = true
+                val rtlHeader = TextView(context).apply {
+                    text = AppLocale.t("rtl_languages")
+                    setTextColor(AppTheme.textSecondary)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                    typeface = AndroidUtilities.bold()
+                    setPadding(AndroidUtilities.dp(4f), AndroidUtilities.dp(10f), AndroidUtilities.dp(4f), AndroidUtilities.dp(6f))
+                }
+                langList.addView(rtlHeader)
+            }
+
             val selected = lang.code == AppLocale.currentCode
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -183,7 +219,7 @@ object SettingsDialog {
         val dm = context.resources.displayMetrics
         dialog.window?.setLayout(
             (dm.widthPixels * 0.92f).toInt(),
-            (dm.heightPixels * 0.78f).toInt()
+            (dm.heightPixels * 0.80f).toInt()
         )
         dialog.show()
     }
