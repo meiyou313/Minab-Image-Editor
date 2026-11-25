@@ -1,8 +1,11 @@
 package com.telephoto.editor
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
@@ -175,16 +178,23 @@ object CrashLogManager {
     }
 
     fun formatFullReport(context: Context? = appContext): String {
-        val entries = getAllEntries()
+        return formatEntriesReport(context, getAllEntries(), "Full Report")
+    }
+
+    fun formatEntriesReport(
+        context: Context? = appContext,
+        entries: List<DebugEntry>,
+        reportTitle: String = "Selected Logs"
+    ): String {
         val sb = StringBuilder()
-        sb.appendLine("TelePhoto Editor — Debug Diagnostic Report")
+        sb.appendLine("TelePhoto Editor — Debug Diagnostic Report ($reportTitle)")
         sb.appendLine("Generated : ${formatTimestamp(System.currentTimeMillis())}")
         sb.appendLine("App       : v${safeVersionName()} (code ${safeVersionCode()})")
         sb.appendLine("Device    : ${buildDeviceSummary()}")
         if (context != null) {
             sb.appendLine("Cert SHA256: ${getSigningCertFingerprint(context)}")
         }
-        sb.appendLine("Total Logs: ${entries.size} (Crashes: ${entries.count { it.level == LEVEL_CRASH }})")
+        sb.appendLine("Entries   : ${entries.size} (Crashes: ${entries.count { it.level == LEVEL_CRASH }})")
         sb.appendLine()
 
         val crumbs = getRecentBreadcrumbs()
@@ -202,6 +212,53 @@ object CrashLogManager {
             }
         }
         return sb.toString()
+    }
+
+    /**
+     * Saves a .txt debug report directly into Downloads/TelePhotoEditor (API 29+ via MediaStore.Downloads,
+     * or app-external Downloads on API 24-28) without requiring storage runtime permissions.
+     * Returns the saved display path on success, or null on failure.
+     */
+    fun exportTextToDownloads(context: Context, prefix: String, content: String): String? {
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val safePrefix = prefix.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(32)
+        val fileName = "${safePrefix}_$stamp.txt"
+
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+                    put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/TelePhotoEditor")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+                try {
+                    resolver.openOutputStream(uri)?.use { out ->
+                        out.write(content.toByteArray(Charsets.UTF_8))
+                        out.flush()
+                    } ?: return null
+                    values.clear()
+                    values.put(MediaStore.Downloads.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                    "Downloads/TelePhotoEditor/$fileName"
+                } catch (e: Throwable) {
+                    resolver.delete(uri, null, null)
+                    throw e
+                }
+            } else {
+                val baseDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
+                val dir = File(baseDir, "TelePhotoEditor")
+                if (!dir.exists()) dir.mkdirs()
+                val file = File(dir, fileName)
+                file.writeText(content, Charsets.UTF_8)
+                file.absolutePath
+            }
+        } catch (t: Throwable) {
+            Log.e("CrashLogManager", "Failed to export debug txt", t)
+            null
+        }
     }
 
     fun getSigningCertFingerprint(context: Context): String {

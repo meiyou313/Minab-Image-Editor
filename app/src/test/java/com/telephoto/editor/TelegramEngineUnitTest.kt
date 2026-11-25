@@ -229,4 +229,55 @@ class TelegramEngineUnitTest {
         assertEquals(-1, shader.getUniform("mvpMatrix"))
         assertEquals(-1, shader.getUniform("unknownUniform"))
     }
+
+    @Test
+    fun appLocale_has20LanguagesWithEnglishDefault() {
+        assertEquals(20, AppLocale.SUPPORTED_LANGUAGES.size)
+        assertEquals("en", AppLocale.SUPPORTED_LANGUAGES.first().code)
+        assertEquals("en", AppLocale.currentCode)
+        assertEquals("Pick Photo from Gallery", AppLocale.t("pick_photo"))
+        assertTrue(AppLocale.SUPPORTED_LANGUAGES.any { it.code == "fa" && it.isRtl })
+        assertTrue(AppLocale.SUPPORTED_LANGUAGES.any { it.code == "ar" && it.isRtl })
+    }
+
+    @Test
+    fun savedFilterState_toneExtensionsAndCopyFromWorkAccurately() {
+        val src = MediaController.SavedFilterState().apply {
+            brightnessValue = 50f
+            tintValue = -40f
+            definitionValue = 60f
+            contrastValue = 20f
+        }
+        assertFalse(src.isEmpty())
+        val delegate = FilterShaders.getFilterShadersDelegate(src)
+        assertEquals(0.175f, delegate.brightnessValue, 0.001f)
+        assertEquals(-0.40f, delegate.tintValue, 0.001f)
+        assertTrue("Definition should enhance sharpness", delegate.sharpenValue > 0.30f)
+
+        val dst = MediaController.SavedFilterState()
+        dst.copyFrom(src)
+        assertEquals(50f, dst.brightnessValue, 0.001f)
+        assertEquals(-40f, dst.tintValue, 0.001f)
+        assertEquals(60f, dst.definitionValue, 0.001f)
+        assertEquals(20f, dst.contrastValue, 0.001f)
+
+        val preset = PresetManager.BUILT_IN_PRESETS.first { it.id == "builtin_cinematic" }
+        preset.applyTo(dst)
+        assertEquals(26f, dst.contrastValue, 0.001f)
+        assertEquals(0f, dst.brightnessValue, 0.001f)
+    }
+
+    @Test
+    fun crashLogManager_formatsSelectedSubsetReportCleanly() {
+        val e1 = CrashLogManager.DebugEntry(
+            id = "e1", timestampMs = 1L, timestampText = "2026-11-25 14:30:00",
+            level = CrashLogManager.LEVEL_ERROR, threadName = "main", tag = "Filter",
+            title = "Error One", stackTrace = "trace1", breadcrumbs = emptyList(),
+            appVersion = "v1.3.0 (6)", deviceSummary = "Test"
+        )
+        val report = CrashLogManager.formatEntriesReport(null, listOf(e1), "Selected 1")
+        assertTrue(report.contains("Selected 1"))
+        assertTrue(report.contains("Error One"))
+        assertTrue(report.contains("Entries   : 1"))
+    }
 }

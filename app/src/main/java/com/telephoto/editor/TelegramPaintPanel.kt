@@ -53,14 +53,15 @@ class TelegramPaintPanel(
 
     private enum class PaintTab { DRAW, TEXT }
 
-    private data class BrushSlot(val iconRes: Int, val brush: Brush)
+    private data class BrushSlot(val iconRes: Int, val brush: Brush, val isMosaic: Boolean = false)
 
     private val brushSlots = listOf(
         BrushSlot(R.drawable.ic_tg_brush_pen, Brush.BRUSHES_LIST[0]),
         BrushSlot(R.drawable.ic_tg_brush_arrow, Brush.BRUSHES_LIST[1]),
         BrushSlot(R.drawable.ic_tg_brush_marker, Brush.BRUSHES_LIST[2]),
         BrushSlot(R.drawable.ic_tg_brush_neon, Brush.BRUSHES_LIST[3]),
-        BrushSlot(R.drawable.ic_tg_brush_blur, Brush.BRUSHES_LIST[4]),
+        BrushSlot(R.drawable.ic_tg_brush_blur, Brush.BRUSHES_LIST[4], isMosaic = false),
+        BrushSlot(R.drawable.ic_tg_brush_mosaic, Brush.BRUSHES_LIST[4], isMosaic = true),
         BrushSlot(R.drawable.ic_tg_brush_eraser, Brush.BRUSHES_LIST[5])
     )
 
@@ -100,6 +101,11 @@ class TelegramPaintPanel(
     // Active Shape mini floating controls (Fill / Place)
     private val shapeActionBar: LinearLayout
     private val shapeFillToggleBtn: TextView
+
+    // Eyedropper mode banner & floating color loupe
+    private val eyedropperBanner: TextView
+    private val eyedropperLoupe: View
+    private var eyedropperActive = false
 
     // Bottom bars
     private val drawPillRow: LinearLayout
@@ -258,7 +264,7 @@ class TelegramPaintPanel(
         renderView = RenderView(context, painting, transparentPaintLayer, null, null).apply {
             isOpaque = false
             setQueue(paintQueue)
-            setUndoStore(undoStore)
+            setUndoStore(this@TelegramPaintPanel.undoStore)
         }
         canvasWrapper.addView(renderView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
@@ -269,6 +275,10 @@ class TelegramPaintPanel(
             }
 
             override fun onTouchEvent(event: MotionEvent): Boolean {
+                if (eyedropperActive) {
+                    handleEyedropperTouch(event)
+                    return true
+                }
                 if (paletteVisible && event.actionMasked == MotionEvent.ACTION_DOWN) {
                     toggleColorPalette(false)
                 }
@@ -371,6 +381,40 @@ class TelegramPaintPanel(
             }
         )
 
+        // Eyedropper hint pill & floating loupe dot
+        eyedropperBanner = TextView(context).apply {
+            text = AppLocale.t("eyedropper_hint")
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            typeface = AndroidUtilities.bold()
+            visibility = View.GONE
+            setPadding(AndroidUtilities.dp(14f), AndroidUtilities.dp(7f), AndroidUtilities.dp(14f), AndroidUtilities.dp(7f))
+            background = GradientDrawable().apply {
+                setColor(0xDD1C1C1E.toInt())
+                cornerRadius = AndroidUtilities.dp(16f).toFloat()
+                setStroke(AndroidUtilities.dp(1f), AppTheme.accent)
+            }
+        }
+        stageContainer.addView(
+            eyedropperBanner,
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+                topMargin = AndroidUtilities.dp(10f)
+            }
+        )
+        eyedropperLoupe = View(context).apply {
+            visibility = View.GONE
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(selectedColor)
+                setStroke(AndroidUtilities.dp(3.5f), Color.WHITE)
+            }
+            elevation = AndroidUtilities.dp(8f).toFloat()
+        }
+        canvasWrapper.addView(
+            eyedropperLoupe,
+            LayoutParams(AndroidUtilities.dp(46f), AndroidUtilities.dp(46f))
+        )
+
         renderView.setDelegate(object : RenderView.RenderViewDelegate {
             override fun onBeganDrawing() {
                 if (paletteVisible) {
@@ -413,6 +457,10 @@ class TelegramPaintPanel(
             },
             onClose = {
                 toggleColorPalette(false)
+            },
+            onEyedropperRequested = {
+                toggleColorPalette(false)
+                setEyedropperMode(true)
             }
         ).apply {
             visibility = View.GONE
@@ -802,10 +850,44 @@ class TelegramPaintPanel(
         fontPopupCard.visibility = View.GONE
     }
 
+    private fun setEyedropperMode(active: Boolean) {
+        eyedropperActive = active
+        eyedropperBanner.visibility = if (active) View.VISIBLE else View.GONE
+        if (!active) {
+            eyedropperLoupe.visibility = View.GONE
+        }
+        textOverlay.interactionEnabled = !active && (activeTab == PaintTab.TEXT)
+    }
+
+    private fun handleEyedropperTouch(event: MotionEvent) {
+        val w = shapeOverlayView.width.coerceAtLeast(1)
+        val h = shapeOverlayView.height.coerceAtLeast(1)
+        val px = ((event.x / w) * sourceBitmap.width).toInt().coerceIn(0, sourceBitmap.width - 1)
+        val py = ((event.y / h) * sourceBitmap.height).toInt().coerceIn(0, sourceBitmap.height - 1)
+        val sampled = sourceBitmap.getPixel(px, py) or (0xFF shl 24)
+
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                eyedropperLoupe.visibility = View.VISIBLE
+                eyedropperLoupe.translationX = (event.x - eyedropperLoupe.width / 2f).coerceIn(0f, (w - eyedropperLoupe.width).toFloat().coerceAtLeast(0f))
+                eyedropperLoupe.translationY = (event.y - eyedropperLoupe.height - AndroidUtilities.dp(24f)).coerceIn(0f, (h - eyedropperLoupe.height).toFloat().coerceAtLeast(0f))
+                (eyedropperLoupe.background as? GradientDrawable)?.setColor(sampled)
+                applySelectedColor(sampled)
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                applySelectedColor(sampled)
+                setEyedropperMode(false)
+            }
+        }
+    }
+
     private fun selectBrush(index: Int) {
+        setEyedropperMode(false)
         selectedBrushIndex = index
-        val brush = brushSlots[index].brush
-        CrashLogManager.addBreadcrumb("Selected brush #${index}: ${brush.javaClass.simpleName}")
+        val slot = brushSlots[index]
+        val brush = slot.brush
+        renderView.painting.setMosaicMode(slot.isMosaic)
+        CrashLogManager.addBreadcrumb("Selected brush #${index}: ${if (slot.isMosaic) "Mosaic" else brush.javaClass.simpleName}")
         renderView.setBrush(brush)
         val weight = brushWeights[index]
         currentSwatch.brushWeight = weight

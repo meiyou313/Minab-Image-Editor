@@ -638,7 +638,11 @@ public class FilterGLThread extends DispatchQueue {
             long newTime = System.currentTimeMillis();
             if (force || Math.abs(lastRenderCallTime - newTime) > 30) {
                 lastRenderCallTime = newTime;
-                drawRunnable.run();
+                try {
+                    drawRunnable.run();
+                } catch (Throwable t) {
+                    FileLog.e("FilterGLThread.drawRunnable failed", t);
+                }
             }
         });
     }

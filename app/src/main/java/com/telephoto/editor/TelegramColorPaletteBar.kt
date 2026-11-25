@@ -19,7 +19,8 @@ import org.telegram.messenger.R
 class TelegramColorPaletteBar(
     context: Context,
     private val onColorSelected: (Int) -> Unit,
-    private val onClose: () -> Unit
+    private val onClose: () -> Unit,
+    private val onEyedropperRequested: (() -> Unit)? = null
 ) : LinearLayout(context) {
 
     private val row1Colors = intArrayOf(
@@ -77,13 +78,27 @@ class TelegramColorPaletteBar(
         card.addView(row2)
         addView(card, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
 
+        val rightCol = LinearLayout(context).apply {
+            orientation = VERTICAL
+            gravity = Gravity.CENTER
+        }
+        if (onEyedropperRequested != null) {
+            val eyedropperBtn = ImageView(context).apply {
+                setImageResource(R.drawable.ic_tg_eyedropper)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(AndroidUtilities.dp(7f), AndroidUtilities.dp(7f), AndroidUtilities.dp(7f), AndroidUtilities.dp(7f))
+                setOnClickListener { onEyedropperRequested.invoke() }
+            }
+            rightCol.addView(eyedropperBtn, LayoutParams(AndroidUtilities.dp(36f), AndroidUtilities.dp(36f)))
+        }
         val plusBtn = ImageView(context).apply {
             setImageResource(R.drawable.ic_tg_plus)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(AndroidUtilities.dp(8f), AndroidUtilities.dp(8f), AndroidUtilities.dp(8f), AndroidUtilities.dp(8f))
+            setPadding(AndroidUtilities.dp(7f), AndroidUtilities.dp(7f), AndroidUtilities.dp(7f), AndroidUtilities.dp(7f))
             setOnClickListener { showCustomColorDialog() }
         }
-        addView(plusBtn, LayoutParams(AndroidUtilities.dp(40f), AndroidUtilities.dp(40f)))
+        rightCol.addView(plusBtn, LayoutParams(AndroidUtilities.dp(36f), AndroidUtilities.dp(36f)))
+        addView(rightCol, LayoutParams(AndroidUtilities.dp(40f), LayoutParams.WRAP_CONTENT))
     }
 
     private fun buildColorRow(colors: IntArray): LinearLayout {

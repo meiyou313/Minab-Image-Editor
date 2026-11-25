@@ -76,7 +76,8 @@ public class PhotoEditorSeekBar extends View {
                 }
                 progress = thumbX / (getMeasuredWidth() - thumbSize);
                 if (delegate != null) {
-                    delegate.onProgressChanged((Integer) getTag(), getProgress());
+                    Object tag = getTag();
+                    delegate.onProgressChanged(tag instanceof Integer ? (Integer) tag : 0, getProgress());
                 }
                 invalidate();
                 return true;
@@ -98,7 +99,8 @@ public class PhotoEditorSeekBar extends View {
         this.progress = (progress - minValue) / (float) (maxValue - minValue);
         invalidate();
         if (notify && delegate != null) {
-            delegate.onProgressChanged((Integer) getTag(), getProgress());
+            Object tag = getTag();
+            delegate.onProgressChanged(tag instanceof Integer ? (Integer) tag : 0, getProgress());
         }
     }
 

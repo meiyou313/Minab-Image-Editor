@@ -1309,6 +1309,29 @@ public class CropView extends FrameLayout implements CropAreaView.AreaViewListen
         }
     }
 
+    public void applyAspectRatioPreset(float aspectRatio) {
+        if (state == null) {
+            return;
+        }
+        if (aspectRatio <= 0.0f) {
+            areaView.setLockedAspectRatio(0.0f);
+            if (listener != null) {
+                listener.onAspectLock(false);
+            }
+        } else {
+            setLockedAspectRatio(aspectRatio);
+        }
+    }
+
+    public float getOriginalAspectRatio() {
+        if (state == null || state.getWidth() <= 0 || state.getHeight() <= 0) {
+            return 1.0f;
+        }
+        float w = state.getBaseRotation() % 180 != 0 ? state.getHeight() : state.getWidth();
+        float h = state.getBaseRotation() % 180 != 0 ? state.getWidth() : state.getHeight();
+        return h > 0 ? (w / h) : 1.0f;
+    }
+
     public void showAspectRatioDialog() {
         if (state == null) {
             return;

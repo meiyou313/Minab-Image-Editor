@@ -8,22 +8,25 @@ import android.graphics.PointF
 import android.graphics.PorterDuff
 import android.graphics.SurfaceTexture
 import android.graphics.drawable.GradientDrawable
+import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.TextureView
 import android.view.View
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import org.telegram.messenger.AndroidUtilities
 import org.telegram.messenger.MediaController
 import org.telegram.messenger.R
 import org.telegram.ui.Components.FilterGLThread
 import org.telegram.ui.Components.FilterShaders
-import org.telegram.ui.Components.PhotoEditorSeekBar
 import org.telegram.ui.Components.PhotoFilterBlurControl
 import org.telegram.ui.Components.PhotoFilterCurvesControl
 import org.telegram.ui.Components.PhotoFilterView
@@ -32,22 +35,31 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * Telegram-styled Adjust / Filters / Curves / Blur screen backed by Telegram's real OpenGL ES 2.0 FilterGLThread & FilterShaders.
- * Bottom row matches Telegram's exact icon layout: `✕` | Tune | Curves | Blur | `✓`
+ * Samsung Gallery-inspired Tone Editor + Telegram OpenGL ES 2.0 Filter/Curves/Blur + Custom Presets.
+ * - Tone tab: Centered label & value -> Circular vector icon carousel matching Samsung Gallery
+ *   (Light Balance/Enhance, Brightness, Exposure, Contrast, Highlights, Shadows, Saturation,
+ *    Tint, Temperature, Sharpness, Definition + merged Fade, Vignette, Grain, Soften Skin,
+ *    Tint Shadows, Tint Highlights) -> Samsung vertical tick ruler slider!
+ * - Presets tab: 6 curated presets + custom user-saved presets (+ Save Current).
+ * - Curves tab: Real Telegram 4-channel spline Curves.
+ * - Blur tab: Real Telegram Radial / Linear Tilt-Shift Blur.
+ * - Non-destructive: Restores and returns SavedFilterState so re-opening Adjust resumes cleanly!
  */
 @SuppressLint("ClickableViewAccessibility")
 class TelegramFilterPanel(
     context: Context,
     private val sourceBitmap: Bitmap,
+    initialFilterState: MediaController.SavedFilterState? = null,
     private val onCancel: () -> Unit,
-    private val onDone: (Bitmap) -> Unit
+    private val onDone: (Bitmap, MediaController.SavedFilterState) -> Unit
 ) : FrameLayout(context) {
 
-    private enum class SubTab { TUNE, CURVES, BLUR }
+    private enum class SubTab { TUNE, PRESETS, CURVES, BLUR }
 
-    private data class TuneTool(
+    private data class ToneTool(
         val id: Int,
-        val label: String,
+        val labelKey: String,
+        val iconRes: Int,
         val min: Int,
         val max: Int,
         val isTintShadows: Boolean = false,
@@ -81,28 +93,34 @@ class TelegramFilterPanel(
         0xFFCD98E5.toInt()
     )
 
-    private val tuneTools = listOf(
-        TuneTool(0, "Enhance", 0, 100, getter = { it.enhanceValue.roundToInt() }, setter = { s, v -> s.enhanceValue = v.toFloat() }),
-        TuneTool(1, "Exposure", -100, 100, getter = { it.exposureValue.roundToInt() }, setter = { s, v -> s.exposureValue = v.toFloat() }),
-        TuneTool(2, "Contrast", -100, 100, getter = { it.contrastValue.roundToInt() }, setter = { s, v -> s.contrastValue = v.toFloat() }),
-        TuneTool(3, "Saturation", -100, 100, getter = { it.saturationValue.roundToInt() }, setter = { s, v -> s.saturationValue = v.toFloat() }),
-        TuneTool(4, "Warmth", -100, 100, getter = { it.warmthValue.roundToInt() }, setter = { s, v -> s.warmthValue = v.toFloat() }),
-        TuneTool(5, "Fade", 0, 100, getter = { it.fadeValue.roundToInt() }, setter = { s, v -> s.fadeValue = v.toFloat() }),
-        TuneTool(6, "Highlights", -100, 100, getter = { it.highlightsValue.roundToInt() }, setter = { s, v -> s.highlightsValue = v.toFloat() }),
-        TuneTool(7, "Shadows", -100, 100, getter = { it.shadowsValue.roundToInt() }, setter = { s, v -> s.shadowsValue = v.toFloat() }),
-        TuneTool(8, "Vignette", 0, 100, getter = { it.vignetteValue.roundToInt() }, setter = { s, v -> s.vignetteValue = v.toFloat() }),
-        TuneTool(9, "Grain", 0, 100, getter = { it.grainValue.roundToInt() }, setter = { s, v -> s.grainValue = v.toFloat() }),
-        TuneTool(10, "Sharpen", 0, 100, getter = { it.sharpenValue.roundToInt() }, setter = { s, v -> s.sharpenValue = v.toFloat() }),
-        TuneTool(11, "Soften Skin", 0, 100, getter = { it.softenSkinValue.roundToInt() }, setter = { s, v -> s.softenSkinValue = v.toFloat() }),
-        TuneTool(12, "Tint Shadows", 0, 0, isTintShadows = true, getter = { it.tintShadowsColor }, setter = { s, v -> s.tintShadowsColor = v }),
-        TuneTool(13, "Tint Highlights", 0, 0, isTintHighlights = true, getter = { it.tintHighlightsColor }, setter = { s, v -> s.tintHighlightsColor = v })
+    // Exact Samsung Gallery Tone order merged cleanly with existing Telegram tools
+    private val toneTools = listOf(
+        ToneTool(0, "tool_enhance", R.drawable.ic_tone_light_balance, 0, 100, getter = { it.enhanceValue.roundToInt() }, setter = { s, v -> s.enhanceValue = v.toFloat() }),
+        ToneTool(1, "tool_brightness", R.drawable.ic_tone_brightness, -100, 100, getter = { it.brightnessValue.roundToInt() }, setter = { s, v -> s.brightnessValue = v.toFloat() }),
+        ToneTool(2, "tool_exposure", R.drawable.ic_tone_exposure, -100, 100, getter = { it.exposureValue.roundToInt() }, setter = { s, v -> s.exposureValue = v.toFloat() }),
+        ToneTool(3, "tool_contrast", R.drawable.ic_tone_contrast, -100, 100, getter = { it.contrastValue.roundToInt() }, setter = { s, v -> s.contrastValue = v.toFloat() }),
+        ToneTool(4, "tool_highlights", R.drawable.ic_tone_highlights, -100, 100, getter = { it.highlightsValue.roundToInt() }, setter = { s, v -> s.highlightsValue = v.toFloat() }),
+        ToneTool(5, "tool_shadows", R.drawable.ic_tone_shadows, -100, 100, getter = { it.shadowsValue.roundToInt() }, setter = { s, v -> s.shadowsValue = v.toFloat() }),
+        ToneTool(6, "tool_saturation", R.drawable.ic_tone_saturation, -100, 100, getter = { it.saturationValue.roundToInt() }, setter = { s, v -> s.saturationValue = v.toFloat() }),
+        ToneTool(7, "tool_tint", R.drawable.ic_tone_tint, -100, 100, getter = { it.tintValue.roundToInt() }, setter = { s, v -> s.tintValue = v.toFloat() }),
+        ToneTool(8, "tool_temperature", R.drawable.ic_tone_temperature, -100, 100, getter = { it.warmthValue.roundToInt() }, setter = { s, v -> s.warmthValue = v.toFloat() }),
+        ToneTool(9, "tool_sharpness", R.drawable.ic_tone_sharpness, 0, 100, getter = { it.sharpenValue.roundToInt() }, setter = { s, v -> s.sharpenValue = v.toFloat() }),
+        ToneTool(10, "tool_definition", R.drawable.ic_tone_definition, 0, 100, getter = { it.definitionValue.roundToInt() }, setter = { s, v -> s.definitionValue = v.toFloat() }),
+        ToneTool(11, "tool_fade", R.drawable.ic_tone_fade, 0, 100, getter = { it.fadeValue.roundToInt() }, setter = { s, v -> s.fadeValue = v.toFloat() }),
+        ToneTool(12, "tool_vignette", R.drawable.ic_tone_vignette, 0, 100, getter = { it.vignetteValue.roundToInt() }, setter = { s, v -> s.vignetteValue = v.toFloat() }),
+        ToneTool(13, "tool_grain", R.drawable.ic_tone_grain, 0, 100, getter = { it.grainValue.roundToInt() }, setter = { s, v -> s.grainValue = v.toFloat() }),
+        ToneTool(14, "tool_skin", R.drawable.ic_tone_skin, 0, 100, getter = { it.softenSkinValue.roundToInt() }, setter = { s, v -> s.softenSkinValue = v.toFloat() }),
+        ToneTool(15, "tool_tint_shadows", R.drawable.ic_tone_tint_swatch, 0, 0, isTintShadows = true, getter = { it.tintShadowsColor }, setter = { s, v -> s.tintShadowsColor = v }),
+        ToneTool(16, "tool_tint_highlights", R.drawable.ic_tone_tint_swatch, 0, 0, isTintHighlights = true, getter = { it.tintHighlightsColor }, setter = { s, v -> s.tintHighlightsColor = v })
     )
 
-    private val filterState = MediaController.SavedFilterState()
+    private val filterState = MediaController.SavedFilterState().apply {
+        if (initialFilterState != null) copyFrom(initialFilterState)
+    }
     private val exportExecutor = Executors.newSingleThreadExecutor()
 
     private var activeTab = SubTab.TUNE
-    private var selectedToolIndex = 0
+    private var selectedToolIndex = 1 // Default to Brightness like Samsung Gallery frame 00:00
     @Volatile
     private var showOriginal = false
     private var glThread: FilterGLThread? = null
@@ -112,22 +130,29 @@ class TelegramFilterPanel(
     private val curvesControl: PhotoFilterCurvesControl
     private val blurControl: PhotoFilterBlurControl
     private val resetFloatingBtn: TextView
+    private val originalCompareBadge: TextView
 
     private val toolTitleText: TextView
     private val toolValueText: TextView
-    private val seekBar: PhotoEditorSeekBar
+    private val rulerSlider: SamsungToneRulerView
     private val tintColorRow: LinearLayout
-    private val toolChipViews = mutableListOf<TextView>()
+    private val toolCircleFrames = mutableListOf<FrameLayout>()
+    private val toolCircleIcons = mutableListOf<ImageView>()
+    private val toolCircleDots = mutableListOf<View>()
 
     private val tunePanel: LinearLayout
+    private val presetsPanel: LinearLayout
+    private val presetsRow: LinearLayout
     private val curvesPanel: LinearLayout
     private val blurPanel: LinearLayout
     private val tabIcons = mutableMapOf<SubTab, ImageView>()
     private val curveChannelButtons = mutableListOf<TextView>()
     private val blurModeButtons = mutableListOf<TextView>()
+    private var activePresetId: String? = null
 
     init {
-        setBackgroundColor(Color.BLACK)
+        setBackgroundColor(AppTheme.bgCanvas)
+        layoutDirection = AppLocale.layoutDirection()
 
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -136,20 +161,22 @@ class TelegramFilterPanel(
 
         // Preview stage
         previewContainer = FrameLayout(context).apply {
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(AppTheme.bgCanvas)
         }
         root.addView(previewContainer, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
 
         textureView = TextureView(context).apply {
             setOnTouchListener { _, event ->
-                if (activeTab == SubTab.TUNE) {
+                if (activeTab == SubTab.TUNE || activeTab == SubTab.PRESETS) {
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
                             showOriginal = true
+                            originalCompareBadge.visibility = View.VISIBLE
                             glThread?.requestRender(false, true, false)
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                             showOriginal = false
+                            originalCompareBadge.visibility = View.GONE
                             glThread?.requestRender(false, true, false)
                         }
                     }
@@ -167,6 +194,7 @@ class TelegramFilterPanel(
         curvesControl = PhotoFilterCurvesControl(context, filterState.curvesToolValue).apply {
             visibility = View.GONE
             setDelegate {
+                activePresetId = null
                 updateResetVisibility()
                 glThread?.requestRender(filterState.blurType != 0, true, false)
             }
@@ -185,15 +213,34 @@ class TelegramFilterPanel(
         }
         previewContainer.addView(blurControl, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
-        // Subtle floating Reset button at top-right (visible only when modified)
-        resetFloatingBtn = TextView(context).apply {
-            text = context.getString(R.string.action_reset)
+        originalCompareBadge = TextView(context).apply {
+            text = AppLocale.t("original")
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = AndroidUtilities.bold()
+            visibility = View.GONE
+            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(6f), AndroidUtilities.dp(12f), AndroidUtilities.dp(6f))
+            background = GradientDrawable().apply {
+                setColor(0xAA000000.toInt())
+                cornerRadius = AndroidUtilities.dp(14f).toFloat()
+            }
+        }
+        previewContainer.addView(
+            originalCompareBadge,
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply {
+                topMargin = AndroidUtilities.dp(10f)
+                leftMargin = AndroidUtilities.dp(12f)
+            }
+        )
+
+        resetFloatingBtn = TextView(context).apply {
+            text = AppLocale.t("reset")
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             typeface = AndroidUtilities.bold()
             setPadding(AndroidUtilities.dp(14f), AndroidUtilities.dp(7f), AndroidUtilities.dp(14f), AndroidUtilities.dp(7f))
             background = GradientDrawable().apply {
-                setColor(0x991C1C1E.toInt())
+                setColor(0xAA1C1C1E.toInt())
                 cornerRadius = AndroidUtilities.dp(16f).toFloat()
             }
             visibility = View.GONE
@@ -207,98 +254,176 @@ class TelegramFilterPanel(
             }
         )
 
-        // Bottom control surface (pure black like Telegram)
+        // Bottom surface
         val bottomPanel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(AppTheme.bgSurface)
         }
         root.addView(bottomPanel, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
-        // TUNE PANEL
+        // === 1. SAMSUNG-STYLE TONE PANEL ===
         tunePanel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(0, AndroidUtilities.dp(8f), 0, AndroidUtilities.dp(4f))
         }
 
-        val seekBarBox = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(AndroidUtilities.dp(18f), AndroidUtilities.dp(6f), AndroidUtilities.dp(18f), AndroidUtilities.dp(2f))
-        }
-        val labelRow = LinearLayout(context).apply {
+        // Centered Active Tone Title + Value (tap value to reset single tool)
+        val headerRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(AndroidUtilities.dp(16f), 0, AndroidUtilities.dp(16f), AndroidUtilities.dp(6f))
         }
         toolTitleText = TextView(context).apply {
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(AppTheme.textPrimary)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
             typeface = AndroidUtilities.bold()
         }
         toolValueText = TextView(context).apply {
-            setTextColor(0xFF4DA3FF.toInt())
+            setTextColor(AppTheme.accentText)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             typeface = AndroidUtilities.bold()
-            gravity = Gravity.END
+            setPadding(AndroidUtilities.dp(8f), 0, 0, 0)
+            setOnClickListener {
+                val tool = toneTools[selectedToolIndex]
+                tool.setter(filterState, 0)
+                selectToneTool(selectedToolIndex)
+                updateResetVisibility()
+                glThread?.requestRender(true, true, false)
+            }
         }
-        labelRow.addView(toolTitleText, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        labelRow.addView(toolValueText, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
-        seekBarBox.addView(labelRow)
+        headerRow.addView(toolTitleText)
+        headerRow.addView(toolValueText)
+        tunePanel.addView(headerRow)
 
-        seekBar = PhotoEditorSeekBar(context).apply {
-            setDelegate { _, progress ->
-                val tool = tuneTools[selectedToolIndex]
+        // Horizontal Circular Tone Icon Carousel (Samsung Gallery style)
+        val circleScroll = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(2f), AndroidUtilities.dp(12f), AndroidUtilities.dp(4f))
+        }
+        val circleRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val circleSize = AndroidUtilities.dp(48f)
+        toneTools.forEachIndexed { idx, tool ->
+            val circleFrame = FrameLayout(context).apply {
+                setOnClickListener { selectToneTool(idx) }
+            }
+            val iv = ImageView(context).apply {
+                setImageResource(tool.iconRes)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(AndroidUtilities.dp(11f), AndroidUtilities.dp(11f), AndroidUtilities.dp(11f), AndroidUtilities.dp(11f))
+            }
+            val dot = View(context).apply {
+                visibility = View.GONE
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(AppTheme.accent)
+                }
+            }
+            circleFrame.addView(iv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+            circleFrame.addView(
+                dot,
+                LayoutParams(AndroidUtilities.dp(5f), AndroidUtilities.dp(5f), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                    bottomMargin = AndroidUtilities.dp(3f)
+                }
+            )
+            toolCircleFrames.add(circleFrame)
+            toolCircleIcons.add(iv)
+            toolCircleDots.add(dot)
+
+            circleRow.addView(
+                circleFrame,
+                LinearLayout.LayoutParams(circleSize, circleSize).apply {
+                    setMargins(AndroidUtilities.dp(6f), AndroidUtilities.dp(2f), AndroidUtilities.dp(6f), AndroidUtilities.dp(2f))
+                }
+            )
+        }
+        circleScroll.addView(circleRow)
+        tunePanel.addView(circleScroll)
+
+        // Samsung Vertical Tick Ruler Slider (or Tint Swatches when Tint Shadows/Highlights selected)
+        val sliderHost = FrameLayout(context).apply {
+            setPadding(AndroidUtilities.dp(6f), AndroidUtilities.dp(2f), AndroidUtilities.dp(6f), AndroidUtilities.dp(4f))
+        }
+        rulerSlider = SamsungToneRulerView(context).apply {
+            onValueChanged = { progress ->
+                val tool = toneTools[selectedToolIndex]
                 if (!tool.isTintColor) {
+                    activePresetId = null
                     tool.setter(filterState, progress)
-                    toolValueText.text = progress.toString()
-                    updateChipStates()
+                    toolValueText.text = formatToneValue(progress)
+                    updateCircleStates()
                     updateResetVisibility()
-                    // Pass updateBlur=true just like upstream PhotoFilterView.java:1273 so blur/skin textures stay fresh
                     glThread?.requestRender(true, true, false)
                 }
             }
         }
-        seekBarBox.addView(seekBar, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, AndroidUtilities.dp(40f)))
+        sliderHost.addView(rulerSlider, LayoutParams(LayoutParams.MATCH_PARENT, AndroidUtilities.dp(44f)))
 
         tintColorRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             visibility = View.GONE
-            setPadding(0, AndroidUtilities.dp(6f), 0, AndroidUtilities.dp(6f))
+            setPadding(0, AndroidUtilities.dp(8f), 0, AndroidUtilities.dp(8f))
         }
-        seekBarBox.addView(tintColorRow)
-        tunePanel.addView(seekBarBox)
-
-        val chipScroll = HorizontalScrollView(context).apply {
-            isHorizontalScrollBarEnabled = false
-            setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(4f), AndroidUtilities.dp(10f), AndroidUtilities.dp(8f))
-        }
-        val chipRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        tuneTools.forEachIndexed { idx, tool ->
-            val chip = TextView(context).apply {
-                text = tool.label
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                typeface = AndroidUtilities.bold()
-                setPadding(AndroidUtilities.dp(13f), AndroidUtilities.dp(7f), AndroidUtilities.dp(13f), AndroidUtilities.dp(7f))
-                setOnClickListener { selectTuneTool(idx) }
-            }
-            toolChipViews.add(chip)
-            chipRow.addView(chip, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                setMargins(AndroidUtilities.dp(4f), 0, AndroidUtilities.dp(4f), 0)
-            })
-        }
-        chipScroll.addView(chipRow)
-        tunePanel.addView(chipScroll)
+        sliderHost.addView(tintColorRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        tunePanel.addView(sliderHost)
         bottomPanel.addView(tunePanel)
 
-        // CURVES PANEL
+        // === 2. CUSTOM PRESETS PANEL ===
+        presetsPanel = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(10f), AndroidUtilities.dp(12f), AndroidUtilities.dp(10f))
+        }
+        val presetsHeader = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(AndroidUtilities.dp(4f), 0, AndroidUtilities.dp(4f), AndroidUtilities.dp(8f))
+        }
+        val presetsTitle = TextView(context).apply {
+            text = AppLocale.t("presets")
+            setTextColor(AppTheme.textPrimary)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            typeface = AndroidUtilities.bold()
+        }
+        val savePresetBtn = TextView(context).apply {
+            text = AppLocale.t("save_preset")
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = AndroidUtilities.bold()
+            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(6f), AndroidUtilities.dp(12f), AndroidUtilities.dp(6f))
+            background = GradientDrawable().apply {
+                setColor(AppTheme.accent)
+                cornerRadius = AndroidUtilities.dp(12f).toFloat()
+            }
+            setOnClickListener { promptSaveCustomPreset() }
+        }
+        presetsHeader.addView(presetsTitle, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+        presetsHeader.addView(savePresetBtn)
+        presetsPanel.addView(presetsHeader)
+
+        val presetsScroll = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+        }
+        presetsRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        presetsScroll.addView(presetsRow)
+        presetsPanel.addView(presetsScroll)
+        bottomPanel.addView(presetsPanel)
+
+        // === 3. CURVES PANEL ===
         curvesPanel = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             visibility = View.GONE
-            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(14f), AndroidUtilities.dp(16f), AndroidUtilities.dp(14f))
+            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(16f), AndroidUtilities.dp(16f), AndroidUtilities.dp(16f))
         }
         listOf(
-            PhotoFilterView.CurvesToolValue.CurvesTypeLuminance to "All",
+            PhotoFilterView.CurvesToolValue.CurvesTypeLuminance to AppLocale.t("tab_all"),
             PhotoFilterView.CurvesToolValue.CurvesTypeRed to "Red",
             PhotoFilterView.CurvesToolValue.CurvesTypeGreen to "Green",
             PhotoFilterView.CurvesToolValue.CurvesTypeBlue to "Blue"
@@ -320,17 +445,17 @@ class TelegramFilterPanel(
         }
         bottomPanel.addView(curvesPanel)
 
-        // BLUR PANEL (Upstream PhotoFilterView.java:660-684: mode 1 -> control type 1 Radial; mode 2 -> control type 0 Linear!)
+        // === 4. BLUR PANEL ===
         blurPanel = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             visibility = View.GONE
-            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(14f), AndroidUtilities.dp(16f), AndroidUtilities.dp(14f))
+            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(16f), AndroidUtilities.dp(16f), AndroidUtilities.dp(16f))
         }
         listOf(
-            0 to context.getString(R.string.blur_off),
-            1 to context.getString(R.string.blur_radial),
-            2 to context.getString(R.string.blur_linear)
+            0 to AppLocale.t("blur_off"),
+            1 to AppLocale.t("blur_radial"),
+            2 to AppLocale.t("blur_linear")
         ).forEach { (mode, label) ->
             val btn = TextView(context).apply {
                 text = label
@@ -343,7 +468,6 @@ class TelegramFilterPanel(
                     if (mode == 0) {
                         blurControl.visibility = View.GONE
                     } else {
-                        // Upstream mapping: PhotoFilterBlurControl type 1 = Radial, type 0 = Linear!
                         blurControl.setType(if (mode == 1) 1 else 0)
                         blurControl.visibility = View.VISIBLE
                     }
@@ -357,15 +481,16 @@ class TelegramFilterPanel(
         }
         bottomPanel.addView(blurPanel)
 
-        // Telegram Bottom Row: `✕` | Tune Icon | Curves Icon | Blur Icon | `✓`
+        // === BOTTOM TAB ROW: `✕` | Tone | Presets | Curves | Blur | `✓` ===
         val bottomRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(2f), AndroidUtilities.dp(12f), AndroidUtilities.dp(8f))
+            setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(2f), AndroidUtilities.dp(10f), AndroidUtilities.dp(8f))
         }
 
         val closeBtn = ImageView(context).apply {
             setImageResource(R.drawable.ic_tg_close)
+            setColorFilter(AppTheme.iconTint)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f))
             setOnClickListener {
@@ -376,7 +501,8 @@ class TelegramFilterPanel(
         bottomRow.addView(closeBtn, LinearLayout.LayoutParams(AndroidUtilities.dp(46f), AndroidUtilities.dp(46f)))
 
         listOf(
-            SubTab.TUNE to R.drawable.ic_tg_tune,
+            SubTab.TUNE to R.drawable.ic_tone_brightness,
+            SubTab.PRESETS to R.drawable.ic_tg_presets,
             SubTab.CURVES to R.drawable.ic_tg_curves,
             SubTab.BLUR to R.drawable.ic_tg_blur_drop
         ).forEach { (tab, iconRes) ->
@@ -392,6 +518,7 @@ class TelegramFilterPanel(
 
         val checkBtn = ImageView(context).apply {
             setImageResource(R.drawable.ic_tg_check)
+            setColorFilter(AppTheme.accentText)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f))
             setOnClickListener { bakeAndFinish() }
@@ -400,17 +527,109 @@ class TelegramFilterPanel(
         bottomPanel.addView(bottomRow)
 
         setupTextureListener()
-        selectTuneTool(0)
+        rebuildPresetsRow()
+        selectToneTool(selectedToolIndex)
         switchTab(SubTab.TUNE)
         updateCurveChannelStyles()
         updateBlurModeStyles()
+        updateResetVisibility()
+        if (filterState.blurType != 0) {
+            blurControl.setType(if (filterState.blurType == 1) 1 else 0)
+        }
 
         previewContainer.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
             layoutTextureToAspect(right - left, bottom - top)
         }
     }
 
-    private fun rebuildTintSwatches(tool: TuneTool) {
+    private fun rebuildPresetsRow() {
+        presetsRow.removeAllViews()
+        val presets = PresetManager.getAllPresets(context)
+        presets.forEach { preset ->
+            val selected = preset.id == activePresetId
+            val card = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(10f), AndroidUtilities.dp(12f), AndroidUtilities.dp(10f))
+                background = GradientDrawable().apply {
+                    setColor(if (selected) 0x332AABEE else AppTheme.bgElevated)
+                    cornerRadius = AndroidUtilities.dp(14f).toFloat()
+                    setStroke(AndroidUtilities.dp(if (selected) 2f else 1f), if (selected) AppTheme.accent else AppTheme.borderSubtle)
+                }
+                setOnClickListener {
+                    activePresetId = preset.id
+                    preset.applyTo(filterState)
+                    blurControl.reset()
+                    blurControl.visibility = View.GONE
+                    curvesControl.invalidate()
+                    selectToneTool(selectedToolIndex)
+                    updateResetVisibility()
+                    rebuildPresetsRow()
+                    glThread?.requestRender(true, true, false)
+                }
+                if (!preset.isBuiltIn) {
+                    setOnLongClickListener {
+                        AlertDialog.Builder(context)
+                            .setTitle(preset.name)
+                            .setMessage("Delete this custom preset?")
+                            .setPositiveButton("Delete") { _, _ ->
+                                PresetManager.deleteCustomPreset(context, preset.id)
+                                rebuildPresetsRow()
+                            }
+                            .setNegativeButton(AppLocale.t("cancel"), null)
+                            .show()
+                        true
+                    }
+                }
+            }
+            val dot = View(context).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(preset.accentColor)
+                }
+            }
+            val label = TextView(context).apply {
+                text = preset.name
+                setTextColor(if (selected) AppTheme.accentText else AppTheme.textPrimary)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                typeface = AndroidUtilities.bold()
+                maxLines = 1
+                setPadding(0, AndroidUtilities.dp(6f), 0, 0)
+            }
+            card.addView(dot, LinearLayout.LayoutParams(AndroidUtilities.dp(20f), AndroidUtilities.dp(20f)))
+            card.addView(label)
+            presetsRow.addView(
+                card,
+                LinearLayout.LayoutParams(AndroidUtilities.dp(86f), AndroidUtilities.dp(68f)).apply {
+                    marginEnd = AndroidUtilities.dp(8f)
+                }
+            )
+        }
+    }
+
+    private fun promptSaveCustomPreset() {
+        val input = EditText(context).apply {
+            hint = AppLocale.t("preset_name")
+            inputType = InputType.TYPE_CLASS_TEXT
+            setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(12f), AndroidUtilities.dp(16f), AndroidUtilities.dp(12f))
+        }
+        AlertDialog.Builder(context)
+            .setTitle(AppLocale.t("save_preset"))
+            .setView(input)
+            .setPositiveButton(AppLocale.t("done")) { _, _ ->
+                val name = input.text?.toString()?.trim()
+                if (!name.isNullOrEmpty()) {
+                    val saved = PresetManager.saveCustomPreset(context, name, filterState)
+                    activePresetId = saved.id
+                    rebuildPresetsRow()
+                    Toast.makeText(context, "${AppLocale.t("preset_saved")}: ${saved.name}", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton(AppLocale.t("cancel"), null)
+            .show()
+    }
+
+    private fun rebuildTintSwatches(tool: ToneTool) {
         tintColorRow.removeAllViews()
         val colors = if (tool.isTintShadows) tintShadowColors else tintHighlightColors
         val current = tool.getter(filterState)
@@ -419,21 +638,22 @@ class TelegramFilterPanel(
             val dot = View(context).apply {
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(if (color == 0) 0xFF2C2C2E.toInt() else color)
+                    setColor(if (color == 0) AppTheme.bgElevated else color)
                     setStroke(
                         AndroidUtilities.dp(if (selected) 3f else 1.5f),
                         when {
-                            selected -> 0xFF4DA3FF.toInt()
+                            selected -> AppTheme.accentText
                             color == 0 -> 0xFF888888.toInt()
                             else -> 0x88FFFFFF.toInt()
                         }
                     )
                 }
                 setOnClickListener {
+                    activePresetId = null
                     tool.setter(filterState, color)
-                    toolValueText.text = if (color == 0) "Off" else "On"
+                    toolValueText.text = if (color == 0) AppLocale.t("blur_off") else "On"
                     rebuildTintSwatches(tool)
-                    updateChipStates()
+                    updateCircleStates()
                     updateResetVisibility()
                     glThread?.requestRender(filterState.blurType != 0, true, false)
                 }
@@ -446,13 +666,15 @@ class TelegramFilterPanel(
     }
 
     private fun resetAllFilters() {
+        activePresetId = null
         filterState.reset()
         blurControl.reset()
         blurControl.visibility = View.GONE
         curvesControl.invalidate()
-        selectTuneTool(selectedToolIndex)
+        selectToneTool(selectedToolIndex)
         updateCurveChannelStyles()
         updateBlurModeStyles()
+        rebuildPresetsRow()
         updateResetVisibility()
         glThread?.requestRender(true, true, false)
     }
@@ -484,7 +706,6 @@ class TelegramFilterPanel(
 
     private fun setupTextureListener() {
         val baseDelegate = FilterShaders.getFilterShadersDelegate(filterState)
-        // Upstream PhotoFilterView.java:1168 returns (showOriginal || filtersEmpty) to avoid base 0.11 sharpen when untouched
         val wrappedDelegate = object : FilterShaders.FilterShadersDelegate by baseDelegate {
             override fun shouldShowOriginal(): Boolean = showOriginal || filterState.isEmpty()
         }
@@ -528,6 +749,7 @@ class TelegramFilterPanel(
     private fun switchTab(tab: SubTab) {
         activeTab = tab
         tunePanel.visibility = if (tab == SubTab.TUNE) View.VISIBLE else View.GONE
+        presetsPanel.visibility = if (tab == SubTab.PRESETS) View.VISIBLE else View.GONE
         curvesPanel.visibility = if (tab == SubTab.CURVES) View.VISIBLE else View.GONE
         blurPanel.visibility = if (tab == SubTab.BLUR) View.VISIBLE else View.GONE
 
@@ -536,61 +758,79 @@ class TelegramFilterPanel(
 
         tabIcons.forEach { (t, icon) ->
             icon.setColorFilter(
-                if (t == tab) 0xFF4DA3FF.toInt() else 0xFFFFFFFF.toInt(),
+                if (t == tab) AppTheme.accentText else AppTheme.iconTint,
                 PorterDuff.Mode.SRC_IN
             )
-            icon.alpha = if (t == tab) 1.0f else 0.7f
+            icon.alpha = if (t == tab) 1.0f else 0.65f
         }
     }
 
-    private fun selectTuneTool(index: Int) {
+    private fun selectToneTool(index: Int) {
         selectedToolIndex = index
-        val tool = tuneTools[index]
-        toolTitleText.text = tool.label
+        val tool = toneTools[index]
+        toolTitleText.text = AppLocale.t(tool.labelKey)
         if (tool.isTintColor) {
-            seekBar.visibility = View.GONE
+            rulerSlider.visibility = View.GONE
             tintColorRow.visibility = View.VISIBLE
             val current = tool.getter(filterState)
-            toolValueText.text = if (current == 0) "Off" else "On"
+            toolValueText.text = if (current == 0) AppLocale.t("blur_off") else "On"
             rebuildTintSwatches(tool)
         } else {
             tintColorRow.visibility = View.GONE
-            seekBar.visibility = View.VISIBLE
-            seekBar.setMinMax(tool.min, tool.max)
+            rulerSlider.visibility = View.VISIBLE
             val current = tool.getter(filterState)
-            seekBar.setProgress(current, false)
-            toolValueText.text = current.toString()
+            rulerSlider.setRangeAndValue(tool.min, tool.max, current)
+            toolValueText.text = formatToneValue(current)
         }
-        updateChipStates()
+        updateCircleStates()
     }
 
-    private fun updateChipStates() {
-        toolChipViews.forEachIndexed { idx, chip ->
-            val tool = tuneTools[idx]
-            val activeValue = tool.getter(filterState) != 0
+    private fun formatToneValue(value: Int): String = when {
+        value > 0 -> "+$value"
+        else -> value.toString()
+    }
+
+    private fun updateCircleStates() {
+        toolCircleFrames.forEachIndexed { idx, frame ->
+            val tool = toneTools[idx]
+            val modified = tool.getter(filterState) != 0
             val selected = idx == selectedToolIndex
-            chip.setTextColor(
-                when {
-                    selected -> Color.BLACK
-                    activeValue -> 0xFF4DA3FF.toInt()
-                    else -> 0xFFD0D0D0.toInt()
-                }
-            )
-            chip.background = GradientDrawable().apply {
-                cornerRadius = AndroidUtilities.dp(16f).toFloat()
-                setColor(
+            val icon = toolCircleIcons[idx]
+            val dot = toolCircleDots[idx]
+
+            frame.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(if (selected) AppTheme.bgElevated else Color.TRANSPARENT)
+                setStroke(
+                    AndroidUtilities.dp(if (selected) 1.8f else 1.1f),
                     when {
-                        selected -> Color.WHITE
-                        activeValue -> 0xFF1A2E47.toInt()
-                        else -> 0xFF1C1C1E.toInt()
+                        selected -> AppTheme.textPrimary
+                        modified -> AppTheme.accent
+                        else -> AppTheme.borderSubtle
                     }
                 )
             }
+            frame.scaleX = if (selected) 1.07f else 1.0f
+            frame.scaleY = if (selected) 1.07f else 1.0f
+
+            if (!tool.isTintColor) {
+                icon.setColorFilter(
+                    when {
+                        selected -> AppTheme.textPrimary
+                        modified -> AppTheme.accentText
+                        else -> AppTheme.textSecondary
+                    },
+                    PorterDuff.Mode.SRC_IN
+                )
+            } else {
+                icon.clearColorFilter()
+            }
+            dot.visibility = if (modified) View.VISIBLE else View.GONE
         }
     }
 
     private fun updateCurveChannelStyles() {
-        val colors = intArrayOf(Color.WHITE, 0xFFFF5252.toInt(), 0xFF69F0AE.toInt(), 0xFF40C4FF.toInt())
+        val colors = intArrayOf(AppTheme.textPrimary, 0xFFFF5252.toInt(), 0xFF69F0AE.toInt(), 0xFF40C4FF.toInt())
         curveChannelButtons.forEachIndexed { idx, btn ->
             val selected = filterState.curvesToolValue.activeType == idx
             btn.setTextColor(if (selected) colors[idx] else 0xFF757575.toInt())
@@ -600,22 +840,23 @@ class TelegramFilterPanel(
     private fun updateBlurModeStyles() {
         blurModeButtons.forEachIndexed { idx, btn ->
             val selected = filterState.blurType == idx
-            btn.setTextColor(if (selected) 0xFF4DA3FF.toInt() else 0xFF9E9E9E.toInt())
+            btn.setTextColor(if (selected) AppTheme.accentText else AppTheme.textSecondary)
         }
     }
 
     private fun bakeAndFinish() {
+        val resultState = MediaController.SavedFilterState().apply { copyFrom(filterState) }
         val thread = glThread
         if (thread == null || filterState.isEmpty()) {
             cleanup()
-            onDone(sourceBitmap)
+            onDone(sourceBitmap, resultState)
             return
         }
         exportExecutor.execute {
             val rendered = thread.texture ?: sourceBitmap
             post {
                 cleanup()
-                onDone(rendered)
+                onDone(rendered, resultState)
             }
         }
     }

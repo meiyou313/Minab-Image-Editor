@@ -21,7 +21,7 @@ import org.telegram.messenger.BuildConfig
 import org.telegram.messenger.R
 
 /**
- * Telegram-dark in-app update dialog displaying version transition, release notes,
+ * Themed & localized in-app update dialog displaying version transition, release notes,
  * direct APK download button, and GitHub Releases page shortcut.
  */
 object UpdateDialogHelper {
@@ -33,15 +33,15 @@ object UpdateDialogHelper {
 
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            layoutDirection = AppLocale.layoutDirection()
             background = GradientDrawable().apply {
-                setColor(0xFF161618.toInt())
+                setColor(AppTheme.bgSurface)
                 cornerRadius = AndroidUtilities.dp(20f).toFloat()
-                setStroke(AndroidUtilities.dp(1f), 0x332AABEE)
+                setStroke(AndroidUtilities.dp(1f), 0x442AABEE)
             }
             setPadding(AndroidUtilities.dp(20f), AndroidUtilities.dp(20f), AndroidUtilities.dp(20f), AndroidUtilities.dp(16f))
         }
 
-        // Top badge + title
         val header = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -52,7 +52,7 @@ object UpdateDialogHelper {
             setPadding(AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f), AndroidUtilities.dp(10f))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(0xFF2AABEE.toInt())
+                setColor(AppTheme.accent)
             }
         }
         val titleBox = LinearLayout(context).apply {
@@ -60,14 +60,14 @@ object UpdateDialogHelper {
             setPadding(AndroidUtilities.dp(12f), 0, 0, 0)
         }
         val titleTv = TextView(context).apply {
-            text = "نسخه جدید منتشر شد!"
-            setTextColor(Color.WHITE)
+            text = AppLocale.t("update_available")
+            setTextColor(AppTheme.textPrimary)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
             typeface = AndroidUtilities.bold()
         }
         val verPill = TextView(context).apply {
             text = "v${BuildConfig.VERSION_NAME}  →  ${release.tagName}"
-            setTextColor(0xFF64D2FF.toInt())
+            setTextColor(AppTheme.accentText)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             typeface = AndroidUtilities.bold()
             setPadding(0, AndroidUtilities.dp(2f), 0, 0)
@@ -78,42 +78,37 @@ object UpdateDialogHelper {
         header.addView(titleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(header)
 
-        // Release notes box
         val notesScroll = ScrollView(context).apply {
             background = GradientDrawable().apply {
-                setColor(0xFF0E0E10.toInt())
+                setColor(AppTheme.bgCode)
                 cornerRadius = AndroidUtilities.dp(12f).toFloat()
             }
             setPadding(AndroidUtilities.dp(12f), AndroidUtilities.dp(10f), AndroidUtilities.dp(12f), AndroidUtilities.dp(10f))
         }
         val notesTv = TextView(context).apply {
             text = release.notes.ifBlank { release.title }
-            setTextColor(0xFFDCDCE2.toInt())
+            setTextColor(AppTheme.textCode)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             setLineSpacing(AndroidUtilities.dp(2f).toFloat(), 1.15f)
         }
         notesScroll.addView(notesTv)
         root.addView(
             notesScroll,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                AndroidUtilities.dp(210f)
-            ).apply {
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, AndroidUtilities.dp(210f)).apply {
                 topMargin = AndroidUtilities.dp(14f)
                 bottomMargin = AndroidUtilities.dp(16f)
             }
         )
 
-        // Primary Download APK button
         val downloadBtn = TextView(context).apply {
-            text = "دانلود مستقیم APK (${release.tagName})"
+            text = "${AppLocale.t("download_apk")} (${release.tagName})"
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
             typeface = AndroidUtilities.bold()
             gravity = Gravity.CENTER
             setPadding(AndroidUtilities.dp(16f), AndroidUtilities.dp(12f), AndroidUtilities.dp(16f), AndroidUtilities.dp(12f))
             background = GradientDrawable().apply {
-                setColor(0xFF2AABEE.toInt())
+                setColor(AppTheme.accent)
                 cornerRadius = AndroidUtilities.dp(14f).toFloat()
             }
             setOnClickListener {
@@ -126,15 +121,14 @@ object UpdateDialogHelper {
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         )
 
-        // Secondary row: GitHub Releases + Later
         val secondaryRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(0, AndroidUtilities.dp(8f), 0, 0)
         }
         val githubBtn = TextView(context).apply {
-            text = "صفحه GitHub"
-            setTextColor(0xFF8AB4F8.toInt())
+            text = AppLocale.t("github_page")
+            setTextColor(AppTheme.accentText)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             typeface = AndroidUtilities.bold()
             gravity = Gravity.CENTER
@@ -145,8 +139,8 @@ object UpdateDialogHelper {
             }
         }
         val laterBtn = TextView(context).apply {
-            text = "بعداً"
-            setTextColor(0xFF8E8E93.toInt())
+            text = AppLocale.t("later")
+            setTextColor(AppTheme.textSecondary)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             typeface = AndroidUtilities.bold()
             gravity = Gravity.CENTER

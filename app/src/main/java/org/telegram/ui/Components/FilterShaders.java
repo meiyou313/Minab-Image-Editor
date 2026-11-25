@@ -519,7 +519,9 @@ public class FilterShaders {
             "uniform lowp vec3 shadowsTintColor;" +
             "uniform lowp vec3 highlightsTintColor;" +
             "uniform lowp float exposure;" +
+            "uniform lowp float brightness;" +
             "uniform lowp float warmth;" +
+            "uniform lowp float tint;" +
             "uniform lowp float grain;" +
             "const lowp float permTexUnit = 1.0 / 256.0;" +
             "const lowp float permTexUnitHalf = 0.5 / 256.0;" +
@@ -696,6 +698,9 @@ public class FilterShaders {
             "mediump float blackTarget = 1.0 - clamp(shadows, 0.0, 1.0);" +
             "hsresult = mix(hsresult, vec3(0.0), blackInterp * blackTarget);" +
             "result = vec4(hsresult.rgb, result.a);" +
+            "if (abs(brightness) > toolEpsilon) {" +
+            "result.rgb = clamp(result.rgb + vec3(brightness), 0.0, 1.0);" +
+            "}" +
             "result = vec4(clamp(((result.rgb - vec3(0.5)) * contrast + vec3(0.5)), 0.0, 1.0), result.a);" +
             "if (abs(fadeAmount) > toolEpsilon) {" +
             "result.rgb = fadeAdjust(result.rgb, fadeAmount);" +
@@ -732,6 +737,11 @@ public class FilterShaders {
             "yuvColor += 0.375 * warmth * curveScale * yuvVec;" +
             "result.rgb = yuvToRgb(yuvColor);" +
             "}" +
+            "if (abs(tint) > toolEpsilon) {" +
+            "highp float tLuma = getLuma(result.rgb);" +
+            "highp float tScale = sin(clamp(tLuma, 0.0, 1.0) * 3.14159);" +
+            "result.rgb = clamp(result.rgb + vec3(tint * 0.13, -tint * 0.14, tint * 0.09) * tScale, 0.0, 1.0);" +
+            "}" +
             "if (abs(grain) > toolEpsilon) {" +
             "highp vec3 rotOffset = vec3(1.425, 3.892, 5.835);" +
             "highp vec2 rotCoordsR = coordRot(vTextureCoord, rotOffset.x);" +
@@ -759,9 +769,11 @@ public class FilterShaders {
         float getSoftenSkinValue();
         float getHighlightsValue();
         float getEnhanceValue();
+        float getBrightnessValue();
         float getExposureValue();
         float getContrastValue();
         float getWarmthValue();
+        float getTintValue();
         float getVignetteValue();
         float getSharpenValue();
         float getGrainValue();
@@ -1011,9 +1023,11 @@ public class FilterShaders {
     private int shadowsHandle;
     private int highlightsHandle;
     private int exposureHandle;
+    private int brightnessHandle;
     private int contrastHandle;
     private int saturationHandle;
     private int warmthHandle;
+    private int tintHandle;
     private int vignetteHandle;
     private int grainHandle;
     private int widthHandle;
@@ -1180,9 +1194,11 @@ public class FilterShaders {
                 shadowsHandle = GLES20.glGetUniformLocation(toolsShaderProgram, "shadows");
                 highlightsHandle = GLES20.glGetUniformLocation(toolsShaderProgram, "highlights");
                 exposureHandle = GLES20.glGetUniformLocation(toolsShaderProgram, "exposure");
+                brightnessHandle = GLES20.glGetUniformLocation(toolsShaderProgram, "brightness");
                 contrastHandle = GLES20.glGetUniformLocation(toolsShaderProgram, "contrast");
                 saturationHandle = GLES20.glGetUniformLocation(toolsShaderProgram, "saturation");
                 warmthHandle = GLES20.glGetUniformLocation(toolsShaderProgram, "warmth");
+                tintHandle = GLES20.glGetUniformLocation(toolsShaderProgram, "tint");
                 vignetteHandle = GLES20.glGetUniformLocation(toolsShaderProgram, "vignette");
                 grainHandle = GLES20.glGetUniformLocation(toolsShaderProgram, "grain");
                 widthHandle = GLES20.glGetUniformLocation(toolsShaderProgram, "width");
@@ -1672,9 +1688,11 @@ public class FilterShaders {
             GLES20.glUniform1f(shadowsHandle, 1);
             GLES20.glUniform1f(highlightsHandle, 1);
             GLES20.glUniform1f(exposureHandle, 0);
+            GLES20.glUniform1f(brightnessHandle, 0);
             GLES20.glUniform1f(contrastHandle, 1);
             GLES20.glUniform1f(saturationHandle, 1);
             GLES20.glUniform1f(warmthHandle, 0);
+            GLES20.glUniform1f(tintHandle, 0);
             GLES20.glUniform1f(vignetteHandle, 0);
             GLES20.glUniform1f(grainHandle, 0);
             GLES20.glUniform1f(fadeAmountHandle, 0);
@@ -1687,9 +1705,11 @@ public class FilterShaders {
             GLES20.glUniform1f(shadowsHandle, delegate.getShadowsValue());
             GLES20.glUniform1f(highlightsHandle, delegate.getHighlightsValue());
             GLES20.glUniform1f(exposureHandle, delegate.getExposureValue());
+            GLES20.glUniform1f(brightnessHandle, delegate.getBrightnessValue());
             GLES20.glUniform1f(contrastHandle, delegate.getContrastValue());
             GLES20.glUniform1f(saturationHandle, delegate.getSaturationValue());
             GLES20.glUniform1f(warmthHandle, delegate.getWarmthValue());
+            GLES20.glUniform1f(tintHandle, delegate.getTintValue());
             GLES20.glUniform1f(vignetteHandle, delegate.getVignetteValue());
             GLES20.glUniform1f(grainHandle, delegate.getGrainValue());
             GLES20.glUniform1f(fadeAmountHandle, delegate.getFadeValue());
@@ -2084,7 +2104,13 @@ public class FilterShaders {
 
             @Override
             public float getEnhanceValue() {
-                return (lastState.enhanceValue / 100.0f);
+                float v = (lastState.enhanceValue / 100.0f) + (lastState.definitionValue / 100.0f) * 0.40f;
+                return Math.min(1.0f, Math.max(0.0f, v));
+            }
+
+            @Override
+            public float getBrightnessValue() {
+                return (lastState.brightnessValue / 100.0f) * 0.35f;
             }
 
             @Override
@@ -2094,12 +2120,17 @@ public class FilterShaders {
 
             @Override
             public float getContrastValue() {
-                return (lastState.contrastValue / 100.0f) * 0.3f + 1;
+                return (lastState.contrastValue / 100.0f) * 0.3f + (lastState.definitionValue / 100.0f) * 0.12f + 1.0f;
             }
 
             @Override
             public float getWarmthValue() {
                 return lastState.warmthValue / 100.0f;
+            }
+
+            @Override
+            public float getTintValue() {
+                return lastState.tintValue / 100.0f;
             }
 
             @Override
@@ -2109,7 +2140,7 @@ public class FilterShaders {
 
             @Override
             public float getSharpenValue() {
-                return 0.11f + lastState.sharpenValue / 100.0f * 0.6f;
+                return 0.11f + (lastState.sharpenValue / 100.0f) * 0.6f + (lastState.definitionValue / 100.0f) * 0.35f;
             }
 
             @Override

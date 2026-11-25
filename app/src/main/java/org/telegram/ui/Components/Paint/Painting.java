@@ -690,7 +690,10 @@ public class Painting {
             return null;
         }
         final Slice slice = new Slice(paintingData.data, blurTex ? 1 : 0, rect, delegate.requestDispatchQueue());
-        delegate.requestUndoStore().registerUndo(UUID.randomUUID(), () -> restoreSlice(slice));
+        UndoStore store = delegate.requestUndoStore();
+        if (store != null) {
+            store.registerUndo(UUID.randomUUID(), () -> restoreSlice(slice));
+        }
 
         return slice;
     }
@@ -712,11 +715,14 @@ public class Painting {
         }
         final Slice slice1 = new Slice(data1.data, 0, rect, delegate.requestDispatchQueue());
         final Slice slice2 = new Slice(data2.data, 1, rect, delegate.requestDispatchQueue());
-        delegate.requestUndoStore().registerUndo(UUID.randomUUID(), () -> {
-            restoreSlice(slice1);
-            restoreSlice(slice2);
-            hasBlur = hadBlur;
-        });
+        UndoStore store = delegate.requestUndoStore();
+        if (store != null) {
+            store.registerUndo(UUID.randomUUID(), () -> {
+                restoreSlice(slice1);
+                restoreSlice(slice2);
+                hasBlur = hadBlur;
+            });
+        }
 
         return slice1; // ehm...
     }
@@ -1140,6 +1146,16 @@ public class Painting {
     }
 
     private Paint imageBitmapPaint;
+    private boolean mosaicMode = false;
+
+    public void setMosaicMode(boolean mosaic) {
+        this.mosaicMode = mosaic;
+    }
+
+    public boolean isMosaicMode() {
+        return mosaicMode;
+    }
+
     public void setBrush(Brush value) {
         brush = value;
 
@@ -1181,7 +1197,19 @@ public class Painting {
                     bitmap.recycle();
                 }
             }
-            Utilities.stackBlurBitmap(bluredBitmap, (int) SCALE);
+            canvas.restore();
+            if (mosaicMode) {
+                int mw = Math.max(8, bw / 5);
+                int mh = Math.max(8, bh / 5);
+                Bitmap tiny = Bitmap.createScaledBitmap(bluredBitmap, mw, mh, true);
+                Paint nearestPaint = new Paint(0);
+                nearestPaint.setFilterBitmap(false);
+                nearestPaint.setAntiAlias(false);
+                canvas.drawBitmap(tiny, null, new RectF(0, 0, bw, bh), nearestPaint);
+                tiny.recycle();
+            } else {
+                Utilities.stackBlurBitmap(bluredBitmap, (int) SCALE);
+            }
             final Texture oldTex = bluredTexture;
             bluredTexture = new Texture(bluredBitmap);
             if (oldTex != null && renderView != null) {

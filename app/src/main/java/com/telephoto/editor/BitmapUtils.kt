@@ -1,5 +1,6 @@
 package com.telephoto.editor
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
@@ -10,8 +11,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
 import org.telegram.messenger.FileLog
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -23,6 +26,37 @@ import kotlin.math.roundToInt
 object BitmapUtils {
 
     private const val MAX_DIMENSION = 2560
+
+    enum class ExportFormat(val label: String, val extension: String, val mimeType: String) {
+        JPEG("JPEG", "jpg", "image/jpeg"),
+        PNG("PNG", "png", "image/png"),
+        WEBP("WebP", "webp", "image/webp")
+    }
+
+    fun compressFormatFor(format: ExportFormat): Bitmap.CompressFormat {
+        return when (format) {
+            ExportFormat.JPEG -> Bitmap.CompressFormat.JPEG
+            ExportFormat.PNG -> Bitmap.CompressFormat.PNG
+            ExportFormat.WEBP -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    Bitmap.CompressFormat.WEBP_LOSSY
+                } else {
+                    @Suppress("DEPRECATION")
+                    Bitmap.CompressFormat.WEBP
+                }
+            }
+        }
+    }
+
+    fun estimateSizeBytes(bitmap: Bitmap, format: ExportFormat, quality: Int): Long {
+        return try {
+            val baos = ByteArrayOutputStream()
+            bitmap.compress(compressFormatFor(format), quality.coerceIn(10, 100), baos)
+            baos.size().toLong()
+        } catch (_: Throwable) {
+            0L
+        }
+    }
 
     fun decodeSampledBitmap(context: Context, uri: Uri): Bitmap? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -134,14 +168,21 @@ object BitmapUtils {
         }
     }
 
-    fun saveToGallery(context: Context, bitmap: Bitmap): Uri? {
+    fun saveToGallery(
+        context: Context,
+        bitmap: Bitmap,
+        format: ExportFormat = ExportFormat.JPEG,
+        quality: Int = 95
+    ): Uri? {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val displayName = "TelePhoto_$timestamp.jpg"
+        val displayName = "TelePhoto_$timestamp.${format.extension}"
+        val compressFmt = compressFormatFor(format)
+        val q = quality.coerceIn(10, 100)
 
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.MIME_TYPE, format.mimeType)
                 put(
                     MediaStore.Images.Media.RELATIVE_PATH,
                     "${Environment.DIRECTORY_PICTURES}/TelePhotoEditor"
@@ -153,7 +194,7 @@ object BitmapUtils {
                 ?: return null
             try {
                 resolver.openOutputStream(uri)?.use { out ->
-                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)) {
+                    if (!bitmap.compress(compressFmt, q, out)) {
                         throw IllegalStateException("Bitmap compress failed")
                     }
                 } ?: throw IllegalStateException("OutputStream null")
@@ -176,12 +217,12 @@ object BitmapUtils {
             val file = File(dir, displayName)
             try {
                 FileOutputStream(file).use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                    bitmap.compress(compressFmt, q, out)
                 }
                 val values = ContentValues().apply {
                     put(MediaStore.Images.Media.TITLE, displayName)
                     put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    put(MediaStore.Images.Media.MIME_TYPE, format.mimeType)
                     @Suppress("DEPRECATION")
                     put(MediaStore.Images.Media.DATA, file.absolutePath)
                 }
@@ -190,6 +231,52 @@ object BitmapUtils {
                 FileLog.e("saveToGallery legacy failed", e)
                 null
             }
+        }
+    }
+
+    fun exportToShareUri(
+        context: Context,
+        bitmap: Bitmap,
+        format: ExportFormat = ExportFormat.JPEG,
+        quality: Int = 95
+    ): Uri? {
+        return try {
+            val dir = File(context.cacheDir, "shared_exports")
+            if (!dir.exists()) dir.mkdirs()
+            // Clean up older shared temp files
+            dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(4)?.forEach { it.delete() }
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val outFile = File(dir, "TelePhoto_$timestamp.${format.extension}")
+            FileOutputStream(outFile).use { out ->
+                bitmap.compress(compressFormatFor(format), quality.coerceIn(10, 100), out)
+            }
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", outFile)
+        } catch (t: Throwable) {
+            FileLog.e("exportToShareUri failed", t)
+            null
+        }
+    }
+
+    fun findLatestGalleryPhotoUri(context: Context): Uri? {
+        return try {
+            val projection = arrayOf(MediaStore.Images.Media._ID)
+            val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
+            context.contentResolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                null,
+                null,
+                sortOrder
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val id = cursor.getLong(0)
+                    ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                } else {
+                    null
+                }
+            }
+        } catch (_: Throwable) {
+            null
         }
     }
 }
